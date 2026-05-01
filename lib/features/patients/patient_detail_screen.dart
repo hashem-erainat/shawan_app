@@ -41,6 +41,14 @@ class PatientDetailScreen extends StatelessWidget {
                     child: CircularProgressIndicator(),
                   ));
                 }
+                if (snapshot.hasError) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Text('Error loading history: ${snapshot.error}', textAlign: TextAlign.center),
+                    ),
+                  );
+                }
                 if (!snapshot.hasData || snapshot.data!.isEmpty) {
                   return _buildEmptyHistory();
                 }

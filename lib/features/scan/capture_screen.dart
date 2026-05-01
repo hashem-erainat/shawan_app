@@ -6,7 +6,9 @@ import '../../core/theme.dart';
 import '../../models/patient.dart';
 import '../../models/scan_record.dart';
 import '../patients/patient_list_screen.dart';
+import 'custom_camera_screen.dart';
 import 'result_screen.dart';
+import '../../core/services/firebase_service.dart';
 
 class CaptureScreen extends StatefulWidget {
   const CaptureScreen({super.key});
@@ -51,11 +53,14 @@ class _CaptureScreenState extends State<CaptureScreen> with TickerProviderStateM
   }
 
   Future<void> _pickImage() async {
-    final picker = ImagePicker();
-    final pickedFile = await picker.pickImage(source: ImageSource.camera);
-    if (pickedFile != null) {
+    final File? result = await Navigator.push<File>(
+      context,
+      MaterialPageRoute(builder: (context) => const CustomCameraScreen()),
+    );
+    
+    if (result != null) {
       setState(() {
-        _image = File(pickedFile.path);
+        _image = result;
       });
     }
   }
@@ -85,21 +90,35 @@ class _CaptureScreenState extends State<CaptureScreen> with TickerProviderStateM
 
     setState(() => _isAnalyzing = true);
 
-    // Simulate AI processing delay (3 seconds)
-    await Future.delayed(const Duration(seconds: 3));
+    try {
+      // Save to Firebase history and get the record
+      final ScanRecord savedScan = await FirebaseService().uploadScan(
+        _image!, 
+        _selectedPatient!.id, 
+        _selectedPatient!.name
+      );
 
-    if (!mounted) return;
-
-    // Generate mock Firebase result
-    final mockScan = _generateMockScanResult(_selectedPatient!);
-
-    setState(() => _isAnalyzing = false);
-
-    // Navigate to result screen with mock data
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (context) => ResultScreen(scan: mockScan)),
-    );
+      if (mounted) {
+        // Navigate to result screen with real data from Firebase
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => ResultScreen(scan: savedScan)),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error during analysis: $e'),
+            backgroundColor: AppTheme.errorRed,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isAnalyzing = false);
+      }
+    }
   }
 
   ScanRecord _generateMockScanResult(Patient patient) {

@@ -9,39 +9,49 @@ class FirebaseService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
 
-  // Upload scan and simulate AI processing
-  Future<void> uploadScan(File imageFile, String patientId, String patientName) async {
+  // Upload scan results only (Stop storing images to save space/bandwidth)
+  Future<ScanRecord> uploadScan(File imageFile, String patientId, String patientName) async {
+    print('DEBUG: Starting uploadScan for $patientName');
     try {
       String scanId = DateTime.now().millisecondsSinceEpoch.toString();
       
-      // 1. Upload to Storage
-      Reference ref = _storage.ref().child('scans/$scanId.jpg');
-      await ref.putFile(imageFile);
-      String imageUrl = await ref.getDownloadURL();
+      // Use a generic eye placeholder instead of uploading the real image
+      String imageUrl = 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/2b/Fundus_photograph_of_normal_right_eye.jpg/800px-Fundus_photograph_of_normal_right_eye.jpg';
+ 
+      // Generate random AI result
+      int stage = Random().nextInt(5); // 0 to 4
+      List<String> labels = ['No DR', 'Mild', 'Moderate', 'Severe', 'Proliferative'];
+      double confidence = 75 + Random().nextDouble() * 20;
 
-      // 2. Create initial record in Firestore
+      // 2. Create record in Firestore
       ScanRecord record = ScanRecord(
         id: scanId,
-        userId: 'dummy_user_123', // In real app, get from FirebaseAuth
+        userId: 'dummy_user_123',
         patientId: patientId,
         patientName: patientName,
         imageUrl: imageUrl,
-        status: ScanStatus.pending,
+        status: ScanStatus.completed,
+        stage: stage,
+        resultLabel: labels[stage],
         timestamp: DateTime.now(),
+        confidence: confidence,
       );
 
+      print('DEBUG: Saving record to Firestore collection "scans" with ID: $scanId');
       await _firestore.collection('scans').doc(scanId).set(record.toMap());
+      print('DEBUG: Record saved successfully');
 
       // 3. Update patient's last scan date
+      print('DEBUG: Updating patient lastScanDate');
       await _firestore.collection('patients').doc(patientId).update({
         'lastScanDate': Timestamp.fromDate(DateTime.now()),
       });
+      print('DEBUG: Patient updated successfully');
 
-      // 4. Simulate AI delay and result (Dummy Data Logic)
-      _simulateAIProcessing(scanId);
+      return record;
       
     } catch (e) {
-      print('Error uploading scan: $e');
+      print('ERROR: Failed to save scan result: $e');
       rethrow;
     }
   }
@@ -135,26 +145,12 @@ class FirebaseService {
     return _firestore
         .collection('scans')
         .where('patientId', isEqualTo: patientId)
-        .orderBy('timestamp', descending: true)
+        // .orderBy('timestamp', descending: true) // Requires index
         .snapshots()
         .map((snapshot) =>
             snapshot.docs.map((doc) => ScanRecord.fromFirestore(doc)).toList());
   }
 
-  void _simulateAIProcessing(String scanId) async {
-    // Wait for 5 seconds to simulate processing
-    await Future.delayed(const Duration(seconds: 5));
-
-    // Generate random dummy result
-    int stage = Random().nextInt(5); // 0 to 4
-    List<String> labels = ['No DR', 'Mild', 'Moderate', 'Severe', 'Proliferative'];
-    
-    await _firestore.collection('scans').doc(scanId).update({
-      'status': 'completed',
-      'stage': stage,
-      'resultLabel': labels[stage],
-    });
-  }
 
   // Stream of recent scans
   Stream<List<ScanRecord>> getRecentScans() {

@@ -5,6 +5,7 @@ import '../../models/scan_record.dart';
 import '../scan/capture_screen.dart';
 import '../scan/result_screen.dart';
 import '../patients/patient_list_screen.dart';
+import '../history/history_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -289,11 +290,15 @@ class DashboardHome extends StatelessWidget {
               Navigator.push(context, MaterialPageRoute(builder: (_) => const CaptureScreen()));
             })),
             const SizedBox(width: 12),
-            Expanded(child: _buildActionButton(context, 'Patients', Icons.person_search_rounded, const Color(0xFF7C3AED), () {})),
+            Expanded(child: _buildActionButton(context, 'Patients', Icons.person_search_rounded, const Color(0xFF7C3AED), () {
+              // Note: This button currently doesn't switch tabs, just for visual.
+            })),
             const SizedBox(width: 12),
             Expanded(child: _buildActionButton(context, 'Reports', Icons.assessment_rounded, const Color(0xFF059669), () {})),
             const SizedBox(width: 12),
-            Expanded(child: _buildActionButton(context, 'History', Icons.history_rounded, const Color(0xFFD97706), () {})),
+            Expanded(child: _buildActionButton(context, 'History', Icons.history_rounded, const Color(0xFFD97706), () {
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const HistoryScreen()));
+            })),
           ],
         ),
       ],
@@ -334,7 +339,9 @@ class DashboardHome extends StatelessWidget {
           children: [
             const Text('Recent Scans', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: AppTheme.textDark)),
             TextButton(
-              onPressed: () {},
+              onPressed: () {
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const HistoryScreen()));
+              },
               child: const Text('View All', style: TextStyle(color: AppTheme.primaryBlue, fontSize: 13)),
             ),
           ],

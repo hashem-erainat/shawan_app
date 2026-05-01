@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "813403601538",
+    "project_id": "shawan-app",
+    "storage_bucket": "shawan-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:813403601538:android:3b60d8916fb4d5085b929b",
+        "android_client_info": {
+          "package_name": "com.example.shawan_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCcLjykoTSCzf9QkvEaxSlBTsxJGIjdDGA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

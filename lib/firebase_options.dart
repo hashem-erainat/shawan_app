@@ -70,6 +70,6 @@ class DefaultFirebaseOptions {
     messagingSenderId: '813403601538',
     projectId: 'shawan-app',
     storageBucket: 'shawan-app.firebasestorage.app',
-    iosBundleId: 'com.example.shawanApp',
+    iosBundleId: 'com.ahmed.shawan',
   );
 }

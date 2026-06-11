@@ -16,6 +16,12 @@ class _CustomCameraScreenState extends State<CustomCameraScreen> {
   List<CameraDescription>? _cameras;
   bool _isInitialized = false;
 
+  // Zoom management
+  double _minZoomLevel = 1.0;
+  double _maxZoomLevel = 1.0;
+  double _currentZoomLevel = 1.0;
+  double _baseScale = 1.0;
+
   @override
   void initState() {
     super.initState();
@@ -34,6 +40,8 @@ class _CustomCameraScreenState extends State<CustomCameraScreen> {
 
     try {
       await _controller!.initialize();
+      _minZoomLevel = await _controller!.getMinZoomLevel();
+      _maxZoomLevel = await _controller!.getMaxZoomLevel();
       if (mounted) {
         setState(() => _isInitialized = true);
       }
@@ -41,6 +49,31 @@ class _CustomCameraScreenState extends State<CustomCameraScreen> {
       debugPrint('Camera error: $e');
     }
   }
+
+  Future<void> _setZoomLevel(double zoom) async {
+    if (_controller == null || !_controller!.value.isInitialized) return;
+    
+    final clampedZoom = zoom.clamp(_minZoomLevel, _maxZoomLevel);
+    if ((clampedZoom - _currentZoomLevel).abs() < 0.05) return; // Reduce noise
+
+    _currentZoomLevel = clampedZoom;
+    try {
+      await _controller!.setZoomLevel(clampedZoom);
+    } catch (e) {
+      debugPrint('Error setting zoom: $e');
+    }
+  }
+
+  void _handleScaleStart(ScaleStartDetails details) {
+    _baseScale = _currentZoomLevel;
+  }
+
+  void _handleScaleUpdate(ScaleUpdateDetails details) {
+    double newZoom = _baseScale * details.scale;
+    _setZoomLevel(newZoom);
+  }
+
+
 
   @override
   void dispose() {
@@ -53,54 +86,11 @@ class _CustomCameraScreenState extends State<CustomCameraScreen> {
 
     try {
       final image = await _controller!.takePicture();
-      
-      // Load the image
-      final bytes = await image.readAsBytes();
-      img.Image? originalImage = img.decodeImage(bytes);
-      
-      if (originalImage != null) {
-        // Handle rotation if necessary (cameras often capture in landscape)
-        if (originalImage.width > originalImage.height) {
-          originalImage = img.copyRotate(originalImage, angle: 90);
-        }
-
-        final screenSize = MediaQuery.of(context).size;
-        final circleRadius = 120.0;
-        final center = Offset(screenSize.width / 2, screenSize.height / 2 - 20);
-
-        // Calculate scale factors
-        final scaleX = originalImage.width / screenSize.width;
-        final scaleY = originalImage.height / screenSize.height;
-        
-        // Use the larger scale to ensure we cover the area
-        final scale = scaleX > scaleY ? scaleX : scaleY;
-
-        // Calculate crop rectangle in image coordinates
-        final cropSize = (circleRadius * 2 * scale).toInt();
-        final cropX = (center.dx * scaleX - cropSize / 2).toInt();
-        final cropY = (center.dy * scaleY - cropSize / 2).toInt();
-
-        // Crop the image to a square containing the circle
-        final croppedImage = img.copyCrop(
-          originalImage,
-          x: cropX.clamp(0, originalImage.width - cropSize),
-          y: cropY.clamp(0, originalImage.height - cropSize),
-          width: cropSize,
-          height: cropSize,
-        );
-
-        // Save the cropped image back to a file
-        final croppedBytes = img.encodeJpg(croppedImage);
-        final directory = await Directory.systemTemp.createTemp();
-        final croppedPath = '${directory.path}/cropped_eye.jpg';
-        final croppedFile = File(croppedPath)..writeAsBytesSync(croppedBytes);
-
-        if (mounted) {
-          Navigator.pop(context, croppedFile);
-        }
+      if (mounted) {
+        Navigator.pop(context, File(image.path));
       }
     } catch (e) {
-      debugPrint('Error taking/cropping picture: $e');
+      debugPrint('Error taking picture: $e');
     }
   }
 
@@ -115,148 +105,65 @@ class _CustomCameraScreenState extends State<CustomCameraScreen> {
 
     return Scaffold(
       backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          // Camera Preview
-          Positioned.fill(
-            child: CameraPreview(_controller!),
-          ),
-
-          // Focus Overlay
-          Positioned.fill(
-            child: CustomPaint(
-              painter: EyeFocusPainter(),
+      body: GestureDetector(
+        onScaleStart: _handleScaleStart,
+        onScaleUpdate: _handleScaleUpdate,
+        child: Stack(
+          children: [
+            // Camera Preview
+            Positioned.fill(
+              child: CameraPreview(_controller!),
             ),
-          ),
 
-          // Top Controls
-          Positioned(
-            top: 50,
-            left: 20,
-            right: 20,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                IconButton(
-                  onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.close, color: Colors.white, size: 30),
-                ),
-                const Text(
-                  'Focus on Eye',
-                  style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(width: 48), // Placeholder for balance
-              ],
+            // Top Controls
+            Positioned(
+              top: 50,
+              left: 20,
+              right: 20,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close, color: Colors.white, size: 30),
+                  ),
+                  const SizedBox(width: 48), // Placeholder for balance
+                ],
+              ),
             ),
-          ),
 
-          // Bottom Controls
-          Positioned(
-            bottom: 50,
-            left: 0,
-            right: 0,
-            child: Column(
-              children: [
-                const Text(
-                  'Align the eye within the circle',
-                  style: TextStyle(color: Colors.white70, fontSize: 14),
-                ),
-                const SizedBox(height: 20),
-                GestureDetector(
-                  onTap: _takePicture,
-                  child: Container(
-                    width: 80,
-                    height: 80,
-                    padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 4),
-                    ),
+            // Bottom Controls
+            Positioned(
+              bottom: 40,
+              left: 0,
+              right: 0,
+              child: Column(
+                children: [
+                  const SizedBox(height: 44),
+                  GestureDetector(
+                    onTap: _takePicture,
                     child: Container(
-                      decoration: const BoxDecoration(
-                        color: Colors.white,
+                      width: 80,
+                      height: 80,
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
                         shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 4),
+                      ),
+                      child: Container(
+                        decoration: const BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
-}
-
-class EyeFocusPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final backgroundPaint = Paint()
-      ..color = Colors.black.withOpacity(0.6)
-      ..style = PaintingStyle.fill;
-
-    final circleRadius = 120.0;
-    final center = Offset(size.width / 2, size.height / 2 - 20);
-
-    // Create a path for the background with a hole in the middle
-    final path = Path()
-      ..addRect(Rect.fromLTWH(0, 0, size.width, size.height))
-      ..addOval(Rect.fromCircle(center: center, radius: circleRadius))
-      ..fillType = PathFillType.evenOdd;
-
-    canvas.drawPath(path, backgroundPaint);
-
-    // Draw the focus ring
-    final ringPaint = Paint()
-      ..color = AppTheme.primaryBlue
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 3;
-    
-    canvas.drawCircle(center, circleRadius, ringPaint);
-
-    // Draw crosshair
-    final crossPaint = Paint()
-      ..color = AppTheme.primaryBlue.withOpacity(0.5)
-      ..strokeWidth = 1;
-    
-    canvas.drawLine(center - const Offset(20, 0), center + const Offset(20, 0), crossPaint);
-    canvas.drawLine(center - const Offset(0, 20), center + const Offset(0, 20), crossPaint);
-
-    // Draw corners around the circle
-    final cornerPaint = Paint()
-      ..color = Colors.white
-      ..strokeWidth = 3
-      ..style = PaintingStyle.stroke;
-    
-    final cornerLen = 30.0;
-    final offset = circleRadius + 10;
-    
-    // Top Left
-    canvas.drawPath(Path()
-      ..moveTo(center.dx - offset, center.dy - offset + cornerLen)
-      ..lineTo(center.dx - offset, center.dy - offset)
-      ..lineTo(center.dx - offset + cornerLen, center.dy - offset), cornerPaint);
-
-    // Top Right
-    canvas.drawPath(Path()
-      ..moveTo(center.dx + offset - cornerLen, center.dy - offset)
-      ..lineTo(center.dx + offset, center.dy - offset)
-      ..lineTo(center.dx + offset, center.dy - offset + cornerLen), cornerPaint);
-
-    // Bottom Left
-    canvas.drawPath(Path()
-      ..moveTo(center.dx - offset, center.dy + offset - cornerLen)
-      ..lineTo(center.dx - offset, center.dy + offset)
-      ..lineTo(center.dx - offset + cornerLen, center.dy + offset), cornerPaint);
-
-    // Bottom Right
-    canvas.drawPath(Path()
-      ..moveTo(center.dx + offset - cornerLen, center.dy + offset)
-      ..lineTo(center.dx + offset, center.dy + offset)
-      ..lineTo(center.dx + offset, center.dy + offset - cornerLen), cornerPaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

@@ -75,15 +75,42 @@ class HistoryScreen extends StatelessWidget {
             ),
             child: Row(
               children: [
-                Container(
-                  width: 60,
-                  height: 60,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(12),
-                    image: DecorationImage(
-                      image: NetworkImage(scan.imageUrl),
-                      fit: BoxFit.cover,
-                    ),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: SizedBox(
+                    width: 60,
+                    height: 60,
+                    child: scan.imageUrl.isNotEmpty
+                        ? Image.network(
+                            scan.imageUrl,
+                            fit: BoxFit.cover,
+                            loadingBuilder: (context, child, loadingProgress) {
+                              if (loadingProgress == null) return child;
+                              return Container(
+                                color: Colors.grey.shade100,
+                                child: const Center(
+                                  child: SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryBlue),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                            errorBuilder: (context, error, stackTrace) {
+                              return Container(
+                                color: Colors.grey.shade100,
+                                child: const Icon(Icons.image_not_supported_outlined, color: Colors.grey, size: 20),
+                              );
+                            },
+                          )
+                        : Container(
+                            color: Colors.grey.shade100,
+                            child: const Icon(Icons.remove_red_eye_outlined, color: Colors.grey, size: 20),
+                          ),
                   ),
                 ),
                 const SizedBox(width: 16),

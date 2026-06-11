@@ -155,15 +155,42 @@ class PatientDetailScreen extends StatelessWidget {
             ),
             child: Row(
               children: [
-                Container(
-                  width: 50,
-                  height: 50,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(8),
-                    image: DecorationImage(
-                      image: NetworkImage(scan.imageUrl),
-                      fit: BoxFit.cover,
-                    ),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: SizedBox(
+                    width: 50,
+                    height: 50,
+                    child: scan.imageUrl.isNotEmpty
+                        ? Image.network(
+                            scan.imageUrl,
+                            fit: BoxFit.cover,
+                            loadingBuilder: (context, child, loadingProgress) {
+                              if (loadingProgress == null) return child;
+                              return Container(
+                                color: Colors.grey.shade100,
+                                child: const Center(
+                                  child: SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryBlue),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                            errorBuilder: (context, error, stackTrace) {
+                              return Container(
+                                color: Colors.grey.shade100,
+                                child: const Icon(Icons.image_not_supported_outlined, color: Colors.grey, size: 18),
+                              );
+                            },
+                          )
+                        : Container(
+                            color: Colors.grey.shade100,
+                            child: const Icon(Icons.remove_red_eye_outlined, color: Colors.grey, size: 18),
+                          ),
                   ),
                 ),
                 const SizedBox(width: 16),

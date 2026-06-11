@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../core/theme.dart';
@@ -121,46 +120,6 @@ class _CaptureScreenState extends State<CaptureScreen> with TickerProviderStateM
     }
   }
 
-  ScanRecord _generateMockScanResult(Patient patient) {
-    final random = Random();
-    final stages = [
-      {'label': 'No DR', 'stage': 0},
-      {'label': 'Mild', 'stage': 1},
-      {'label': 'Moderate', 'stage': 2},
-      {'label': 'Severe', 'stage': 3},
-      {'label': 'Proliferative', 'stage': 4},
-    ];
-
-    // Weighted random: more likely to be No DR or Mild
-    final weights = [40, 25, 20, 10, 5];
-    int total = 0;
-    for (var w in weights) total += w;
-    int rand = random.nextInt(total);
-    int selectedIndex = 0;
-    int cumulative = 0;
-    for (int i = 0; i < weights.length; i++) {
-      cumulative += weights[i];
-      if (rand < cumulative) {
-        selectedIndex = i;
-        break;
-      }
-    }
-
-    final selected = stages[selectedIndex];
-
-    return ScanRecord(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      userId: 'mock_user_ahmed_atif',
-      patientId: patient.id,
-      patientName: patient.name,
-      imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/2b/Fundus_photograph_of_normal_right_eye.jpg/800px-Fundus_photograph_of_normal_right_eye.jpg',
-      status: ScanStatus.completed,
-      stage: selected['stage'] as int,
-      resultLabel: selected['label'] as String,
-      timestamp: DateTime.now(),
-      confidence: (75 + random.nextInt(24)).toDouble(),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -183,10 +142,6 @@ class _CaptureScreenState extends State<CaptureScreen> with TickerProviderStateM
 
                 // Patient Selector
                 _buildPatientSelector(),
-                const SizedBox(height: 20),
-
-                // Tips Card
-                _buildTipsCard(),
                 const SizedBox(height: 100),
               ],
             ),
@@ -272,36 +227,64 @@ class _CaptureScreenState extends State<CaptureScreen> with TickerProviderStateM
                 ),
               ),
 
-            // Tap to capture button (when no image)
+            // Tap to capture or select image (when no image)
             if (_image == null)
               Positioned(
                 bottom: 28,
-                child: GestureDetector(
-                  onTap: _pickImage,
-                  child: AnimatedBuilder(
-                    animation: _pulseAnimation,
-                    builder: (context, child) => Transform.scale(
-                      scale: _pulseAnimation.value,
-                      child: child,
-                    ),
-                    child: Container(
-                      width: 72,
-                      height: 72,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: AppTheme.primaryBlue.withOpacity(0.9),
-                        border: Border.all(color: Colors.white, width: 3),
-                        boxShadow: [
-                          BoxShadow(
-                            color: AppTheme.primaryBlue.withOpacity(0.6),
-                            blurRadius: 20,
-                            spreadRadius: 4,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Camera Action
+                    GestureDetector(
+                      onTap: _pickImage,
+                      child: AnimatedBuilder(
+                        animation: _pulseAnimation,
+                        builder: (context, child) => Transform.scale(
+                          scale: _pulseAnimation.value,
+                          child: child,
+                        ),
+                        child: Container(
+                          width: 72,
+                          height: 72,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: AppTheme.primaryBlue.withOpacity(0.9),
+                            border: Border.all(color: Colors.white, width: 3),
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppTheme.primaryBlue.withOpacity(0.6),
+                                blurRadius: 20,
+                                spreadRadius: 4,
+                              ),
+                            ],
                           ),
-                        ],
+                          child: const Icon(Icons.camera_alt_rounded, color: Colors.white, size: 32),
+                        ),
                       ),
-                      child: const Icon(Icons.camera_alt, color: Colors.white, size: 32),
                     ),
-                  ),
+                    const SizedBox(width: 28),
+                    // Gallery Action
+                    GestureDetector(
+                      onTap: _pickFromGallery,
+                      child: Container(
+                        width: 72,
+                        height: 72,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.white.withOpacity(0.2),
+                          border: Border.all(color: Colors.white, width: 3),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.3),
+                              blurRadius: 15,
+                              spreadRadius: 2,
+                            ),
+                          ],
+                        ),
+                        child: const Icon(Icons.photo_library_rounded, color: Colors.white, size: 28),
+                      ),
+                    ),
+                  ],
                 ),
               ),
 
@@ -443,46 +426,7 @@ class _CaptureScreenState extends State<CaptureScreen> with TickerProviderStateM
     );
   }
 
-  Widget _buildTipsCard() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFFEEF4FF),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.primaryBlue.withOpacity(0.2)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.lightbulb_outline, color: AppTheme.primaryBlue, size: 18),
-              const SizedBox(width: 8),
-              const Text('Capture Tips', style: TextStyle(fontWeight: FontWeight.bold, color: AppTheme.primaryBlue)),
-            ],
-          ),
-          const SizedBox(height: 10),
-          _tip('Ensure proper alignment with the retinal camera'),
-          _tip('Patient should look directly at the fixation light'),
-          _tip('Avoid blinking during capture for best results'),
-        ],
-      ),
-    );
-  }
 
-  Widget _tip(String text) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(Icons.circle, size: 6, color: AppTheme.primaryBlue),
-          const SizedBox(width: 8),
-          Expanded(child: Text(text, style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary))),
-        ],
-      ),
-    );
-  }
 
   Widget _buildBottomActions() {
     return Container(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../core/theme.dart';
 import '../../core/services/firebase_service.dart';
 import '../../models/scan_record.dart';
+import '../../models/patient.dart';
 import '../scan/capture_screen.dart';
 import '../scan/result_screen.dart';
 import '../patients/patient_list_screen.dart';
@@ -108,27 +109,6 @@ class DashboardHome extends StatelessWidget {
                   ],
                 ),
               ),
-              // Notification bell
-              Container(
-                decoration: BoxDecoration(
-                  color: AppTheme.backgroundLight,
-                  shape: BoxShape.circle,
-                ),
-                child: IconButton(
-                  onPressed: () {},
-                  icon: Badge(
-                    label: const Text('2'),
-                    child: const Icon(Icons.notifications_outlined, color: AppTheme.textDark),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              CircleAvatar(
-                radius: 22,
-                backgroundColor: AppTheme.primaryBlue.withOpacity(0.1),
-                foregroundImage: const NetworkImage('https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?ixlib=rb-4.0.3&auto=format&fit=crop&w=150&q=80'),
-                child: const Text('AA', style: TextStyle(color: AppTheme.primaryBlue, fontWeight: FontWeight.bold)),
-              ),
             ],
           ),
         ),
@@ -216,27 +196,83 @@ class DashboardHome extends StatelessWidget {
   }
 
   Widget _buildStatsSection(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('Overview', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: AppTheme.textDark)),
-        const SizedBox(height: 14),
-        Row(
-          children: [
-            Expanded(child: _buildStatCard('Total Patients', '1,240', Icons.people_outline_rounded, AppTheme.primaryBlue, '+12 this month')),
-            const SizedBox(width: 14),
-            Expanded(child: _buildStatCard('Scans Today', '28', Icons.biotech_rounded, const Color(0xFF7C3AED), '+5 vs yesterday')),
-          ],
-        ),
-        const SizedBox(height: 14),
-        Row(
-          children: [
-            Expanded(child: _buildStatCard('High Risk', '3', Icons.warning_amber_rounded, AppTheme.errorRed, 'Require attention', isAlert: true)),
-            const SizedBox(width: 14),
-            Expanded(child: _buildStatCard('Avg. Accuracy', '94.8%', Icons.analytics_rounded, AppTheme.successGreen, 'AI model score')),
-          ],
-        ),
-      ],
+    return StreamBuilder<List<Patient>>(
+      stream: FirebaseService().getPatients(),
+      builder: (context, patientsSnapshot) {
+        final totalPatientsCount = patientsSnapshot.data?.length ?? 0;
+        
+        return StreamBuilder<List<ScanRecord>>(
+          stream: FirebaseService().getAllScans(),
+          builder: (context, scansSnapshot) {
+            final now = DateTime.now();
+            final startOfToday = DateTime(now.year, now.month, now.day);
+            
+            final scansTodayCount = scansSnapshot.data?.where((scan) {
+              return scan.timestamp.isAfter(startOfToday);
+            }).length ?? 0;
+
+            final highRiskCount = scansSnapshot.data?.where((scan) {
+              return scan.resultLabel == 'Severe' || scan.resultLabel == 'Proliferative';
+            }).length ?? 0;
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Overview', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: AppTheme.textDark)),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildStatCard(
+                        'Total Patients', 
+                        totalPatientsCount.toString(), 
+                        Icons.people_outline_rounded, 
+                        AppTheme.primaryBlue, 
+                        'Registered patients'
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: _buildStatCard(
+                        'Scans Today', 
+                        scansTodayCount.toString(), 
+                        Icons.biotech_rounded, 
+                        const Color(0xFF7C3AED), 
+                        'Completed today'
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildStatCard(
+                        'High Risk', 
+                        highRiskCount.toString(), 
+                        Icons.warning_amber_rounded, 
+                        AppTheme.errorRed, 
+                        'Require attention', 
+                        isAlert: highRiskCount > 0
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: _buildStatCard(
+                        'Avg. Accuracy', 
+                        '94.8%', 
+                        Icons.analytics_rounded, 
+                        AppTheme.successGreen, 
+                        'AI model score'
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
@@ -470,23 +506,11 @@ class _SettingsScreen extends StatelessWidget {
         children: [
           _buildSettingsSection('Account', [
             _buildSettingsTile(Icons.person_outline, 'Profile', 'Dr. Ahmed Atif'),
-            _buildSettingsTile(Icons.badge_outlined, 'Credentials', 'Ophthalmologist'),
           ]),
           const SizedBox(height: 20),
           _buildSettingsSection('Application', [
             _buildSettingsTile(Icons.language_outlined, 'Language', 'English'),
-            _buildSettingsTile(Icons.notifications_outlined, 'Notifications', 'Enabled'),
             _buildSettingsTile(Icons.dark_mode_outlined, 'Theme', 'Light'),
-          ]),
-          const SizedBox(height: 20),
-          _buildSettingsSection('AI Model', [
-            _buildSettingsTile(Icons.psychology_outlined, 'Model Version', 'DR-ResNet-v2.3.1'),
-            _buildSettingsTile(Icons.tune_rounded, 'Confidence Threshold', '70%'),
-          ]),
-          const SizedBox(height: 20),
-          _buildSettingsSection('About', [
-            _buildSettingsTile(Icons.info_outline, 'App Version', '1.0.0'),
-            _buildSettingsTile(Icons.privacy_tip_outlined, 'Privacy Policy', ''),
           ]),
         ],
       ),

@@ -9,14 +9,19 @@ class FirebaseService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
 
-  // Upload scan results only (Stop storing images to save space/bandwidth)
+  // Upload scan results with actual image saved in Firebase Storage
   Future<ScanRecord> uploadScan(File imageFile, String patientId, String patientName) async {
     print('DEBUG: Starting uploadScan for $patientName');
     try {
       String scanId = DateTime.now().millisecondsSinceEpoch.toString();
       
-      // Use a generic eye placeholder instead of uploading the real image
-      String imageUrl = 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/2b/Fundus_photograph_of_normal_right_eye.jpg/800px-Fundus_photograph_of_normal_right_eye.jpg';
+      // Upload image to Firebase Storage
+      print('DEBUG: Uploading image to Storage under path: scans/$scanId.jpg');
+      final Reference storageRef = _storage.ref().child('scans/$scanId.jpg');
+      final UploadTask uploadTask = storageRef.putFile(imageFile);
+      final TaskSnapshot snapshot = await uploadTask;
+      final String imageUrl = await snapshot.ref.getDownloadURL();
+      print('DEBUG: Image uploaded successfully. URL: $imageUrl');
  
       // Generate random AI result
       int stage = Random().nextInt(5); // 0 to 4
@@ -140,15 +145,17 @@ class FirebaseService {
             snapshot.docs.map((doc) => Patient.fromFirestore(doc)).toList());
   }
 
-  // Get scans for a specific patient
+  // Get scans for a specific patient, sorted chronologically in Dart to avoid index issues
   Stream<List<ScanRecord>> getPatientScans(String patientId) {
     return _firestore
         .collection('scans')
         .where('patientId', isEqualTo: patientId)
-        // .orderBy('timestamp', descending: true) // Requires index
         .snapshots()
-        .map((snapshot) =>
-            snapshot.docs.map((doc) => ScanRecord.fromFirestore(doc)).toList());
+        .map((snapshot) {
+          final scans = snapshot.docs.map((doc) => ScanRecord.fromFirestore(doc)).toList();
+          scans.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+          return scans;
+        });
   }
 
 
@@ -158,6 +165,15 @@ class FirebaseService {
         .collection('scans')
         .orderBy('timestamp', descending: true)
         .limit(10)
+        .snapshots()
+        .map((snapshot) =>
+            snapshot.docs.map((doc) => ScanRecord.fromFirestore(doc)).toList());
+  }
+
+  // Stream of all scans for dashboard counts
+  Stream<List<ScanRecord>> getAllScans() {
+    return _firestore
+        .collection('scans')
         .snapshots()
         .map((snapshot) =>
             snapshot.docs.map((doc) => ScanRecord.fromFirestore(doc)).toList());

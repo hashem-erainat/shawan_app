@@ -55,10 +55,6 @@ class ResultScreen extends StatelessWidget {
                   _buildRecommendationsCard(statusColor),
                   const SizedBox(height: 20),
 
-                  // Mock Firebase Analysis Data
-                  _buildFirebaseDataCard(),
-                  const SizedBox(height: 20),
-
                   // Action Buttons
                   _buildActionButtons(context),
                   const SizedBox(height: 32),
@@ -337,52 +333,7 @@ class ResultScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildFirebaseDataCard() {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1A1C2E),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(color: const Color(0xFFFF8C00).withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
-                child: const Icon(Icons.whatshot, color: Color(0xFFFF8C00), size: 16),
-              ),
-              const SizedBox(width: 10),
-              const Text('Firebase AI Analysis Log', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
-            ],
-          ),
-          const SizedBox(height: 14),
-          _logLine('model_version', 'DR-ResNet-v2.3.1'),
-          _logLine('inference_time', '1.24s'),
-          _logLine('confidence_score', '${scan.confidence?.toStringAsFixed(2) ?? "94.20"}%'),
-          _logLine('result_label', scan.resultLabel ?? 'No DR'),
-          _logLine('stage_index', '${scan.stage ?? 0}'),
-          _logLine('scan_id', scan.id.substring(0, 12) + '...'),
-          _logLine('timestamp', scan.timestamp.toIso8601String().substring(0, 19)),
-          _logLine('status', '✓ completed'),
-        ],
-      ),
-    );
-  }
 
-  Widget _logLine(String key, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
-        children: [
-          Text('$key: ', style: const TextStyle(color: Color(0xFF64FFDA), fontFamily: 'monospace', fontSize: 12)),
-          Expanded(child: Text('"$value"', style: const TextStyle(color: Colors.white70, fontFamily: 'monospace', fontSize: 12))),
-        ],
-      ),
-    );
-  }
 
   Widget _buildActionButtons(BuildContext context) {
     return Row(
@@ -444,41 +395,41 @@ class ResultScreen extends StatelessWidget {
     switch (label) {
       case 'No DR':
         return [
-          'No signs of diabetic retinopathy detected.',
-          'Schedule follow-up retinal screening in 12 months.',
-          'Continue managing blood glucose levels effectively.',
-          'Maintain regular HbA1c monitoring every 3 months.',
+          'Annual dilated fundus examination is recommended (every 12 months) as per clinical guidelines.',
+          'Optimize glycemic control (target HbA1c < 7.0%) to prevent future retinopathy onset.',
+          'Maintain tight control of blood pressure (< 130/80 mmHg) and serum lipids.',
+          'Educate patient on the critical importance of regular retinopathy screenings and compliance.',
         ];
       case 'Mild':
         return [
-          'Mild NPDR detected. Close monitoring is advised.',
-          'Follow-up retinal examination in 6 months.',
-          'Optimize glycemic control — target HbA1c < 7%.',
-          'Control blood pressure and lipid levels.',
+          'Mild NPDR detected. Dilated eye examination should be repeated in 6 to 12 months.',
+          'Strict systemic control of blood glucose, blood pressure, and cholesterol is essential.',
+          'Coordinate care and share diagnostic findings with the patient\'s primary care physician.',
+          'Advise patient to monitor for any sudden changes in visual acuity or new symptoms (floaters).',
         ];
       case 'Moderate':
         return [
-          'Moderate NPDR detected. Ophthalmology consultation recommended.',
-          'Follow-up retinal examination in 3–4 months.',
-          'Strict glycemic and blood pressure control required.',
-          'Consider referral for fluorescein angiography.',
+          'Moderate NPDR detected. Dilated eye examination is recommended every 3 to 6 months.',
+          'Refer to a comprehensive ophthalmologist or retina specialist for baseline evaluation.',
+          'Optimize systemic metabolic parameters (blood glucose, blood pressure, renal function, lipids).',
+          'Counsel patient on the significantly increased risk of progression to vision-threatening stages.',
         ];
       case 'Severe':
         return [
-          '⚠️ Severe NPDR detected. Prompt specialist referral required.',
-          'Urgent ophthalmology appointment within 1–2 weeks.',
-          'Panretinal photocoagulation (PRP) may be indicated.',
-          'Intensive medical management to reduce progression risk.',
+          '⚠️ Severe NPDR detected. Urgent referral to a retina specialist is required (within 2 to 4 weeks).',
+          'Close clinical follow-up every 1 to 2 months may be necessary to monitor progression.',
+          'Consider panretinal photocoagulation (PRP) or anti-VEGF therapy, especially if follow-up is uncertain.',
+          'Intensive medical management of systemic risk factors is highly recommended.',
         ];
       case 'Proliferative':
         return [
-          '🚨 PDR detected. URGENT specialist referral required IMMEDIATELY.',
-          'Risk of severe vision loss if untreated.',
-          'Anti-VEGF therapy or PRP laser treatment likely required.',
-          'Vitrectomy may be necessary if vitreous hemorrhage is present.',
+          '🚨 Proliferative DR detected. URGENT specialist referral is required immediately (within 24-48 hours).',
+          'Extremely high risk of severe, irreversible vision loss if left untreated.',
+          'Prompt panretinal photocoagulation (PRP) laser and/or intravitreal anti-VEGF injections are indicated.',
+          'Surgical intervention (vitrectomy) may be required in cases of non-clearing vitreous hemorrhage.',
         ];
       default:
-        return ['Analysis pending. Please check back shortly.'];
+        return ['Diagnostic analysis complete. Regular eye care coordination is recommended.'];
     }
   }
 }

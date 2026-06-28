@@ -165,7 +165,12 @@ class _PatientListScreenState extends State<PatientListScreen> {
             ),
             IconButton(
               onPressed: () {
-                // Disabled - Just visual
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => AddPatientScreen(patient: patient),
+                  ),
+                );
               },
               icon: Icon(Icons.edit_outlined, color: AppTheme.primaryBlue.withOpacity(0.7), size: 20),
             ),

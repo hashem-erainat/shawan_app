@@ -149,7 +149,7 @@ class _AddPatientScreenState extends State<AddPatientScreen> {
               _buildTextField(
                 label: 'Phone Number',
                 controller: _phoneController,
-                hint: '+1 234 567 890',
+                hint: 'ex: 0569131588',
                 icon: Icons.phone_outlined,
                 keyboardType: TextInputType.phone,
               ),
@@ -222,6 +222,7 @@ class _AddPatientScreenState extends State<AddPatientScreen> {
           validator: validator,
           decoration: InputDecoration(
             hintText: hint,
+            hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
             prefixIcon: Icon(icon, color: AppTheme.primaryBlue),
             filled: true,
             fillColor: Colors.white,

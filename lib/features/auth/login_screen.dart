@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../core/theme.dart';
 import '../dashboard/dashboard_screen.dart';
+import 'register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -11,13 +14,10 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _emailController = TextEditingController(text: 'ahmedatif@gmail.com');
-  final _passwordController = TextEditingController(text: '123456');
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
   bool _isPasswordVisible = false;
   bool _isLoading = false;
-
-  final String _correctEmail = 'ahmedatif@gmail.com';
-  final String _correctPassword = '123456';
 
   void _handleLogin() async {
     final email = _emailController.text.trim();
@@ -30,26 +30,42 @@ class _LoginScreenState extends State<LoginScreen> {
 
     setState(() => _isLoading = true);
 
-    // Simulate network delay
-    await Future.delayed(const Duration(seconds: 1));
-
-    setState(() => _isLoading = false);
-
-    if (email == _correctEmail && password == _correctPassword) {
-      // Save login state
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('isLoggedIn', true);
-
-      if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const DashboardScreen()),
+    try {
+      UserCredential? userCredential;
+      try {
+        userCredential = await FirebaseAuth.instance.signInWithEmailAndPassword(
+          email: email,
+          password: password,
         );
+      } on FirebaseAuthException catch (authEx) {
+        if (authEx.code == 'user-not-found' || authEx.code == 'wrong-password' || authEx.code == 'invalid-credential') {
+          _showError('Incorrect password or invalid credentials');
+          return;
+        } else {
+          rethrow;
+        }
       }
-    } else if (email != _correctEmail) {
-      _showError('Invalid email address');
-    } else {
-      _showError('Incorrect password');
+
+      if (userCredential != null) {
+        // Save login state locally
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('isLoggedIn', true);
+
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => const DashboardScreen()),
+          );
+        }
+      }
+    } on FirebaseAuthException catch (e) {
+      _showError(e.message ?? 'Authentication failed');
+    } catch (e) {
+      _showError('Error: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -131,7 +147,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         const SizedBox(height: 20),
                         const Text(
-                          'RetinaCare',
+                          'DR-Check AI',
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 28,
@@ -257,6 +273,35 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                             ),
                     ),
+                  ),
+                  const SizedBox(height: 24),
+
+                  // Sign Up Link
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Text(
+                        "Don't have an account? ",
+                        style: TextStyle(color: AppTheme.textSecondary),
+                      ),
+                      GestureDetector(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const RegisterScreen(),
+                            ),
+                          );
+                        },
+                        child: const Text(
+                          'Sign Up',
+                          style: TextStyle(
+                            color: AppTheme.primaryBlue,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),

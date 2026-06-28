@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../core/theme.dart';
@@ -16,7 +17,8 @@ class CaptureScreen extends StatefulWidget {
   State<CaptureScreen> createState() => _CaptureScreenState();
 }
 
-class _CaptureScreenState extends State<CaptureScreen> with TickerProviderStateMixin {
+class _CaptureScreenState extends State<CaptureScreen>
+    with TickerProviderStateMixin {
   File? _image;
   bool _isAnalyzing = false;
   Patient? _selectedPatient;
@@ -56,7 +58,7 @@ class _CaptureScreenState extends State<CaptureScreen> with TickerProviderStateM
       context,
       MaterialPageRoute(builder: (context) => const CustomCameraScreen()),
     );
-    
+
     if (result != null) {
       setState(() {
         _image = result;
@@ -81,7 +83,9 @@ class _CaptureScreenState extends State<CaptureScreen> with TickerProviderStateM
           content: const Text('Please capture an image and select a patient'),
           backgroundColor: AppTheme.errorRed,
           behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
         ),
       );
       return;
@@ -89,37 +93,86 @@ class _CaptureScreenState extends State<CaptureScreen> with TickerProviderStateM
 
     setState(() => _isAnalyzing = true);
 
+    StreamSubscription<ScanRecord>? subscription;
+    Timer? timeoutTimer;
+
     try {
-      // Save to Firebase history and get the record
+      // 1. Upload scan initially in pending status
       final ScanRecord savedScan = await FirebaseService().uploadScan(
-        _image!, 
-        _selectedPatient!.id, 
-        _selectedPatient!.name
+        _image!,
+        _selectedPatient!.id,
+        _selectedPatient!.name,
       );
 
+      final completer = Completer<ScanRecord>();
+
+      // 2. Set up 120-second timeout
+      timeoutTimer = Timer(const Duration(seconds: 120), () {
+        subscription?.cancel();
+        if (!completer.isCompleted) {
+          completer.completeError(
+            TimeoutException(
+              'AI model analysis timed out. Please check if the Raspberry Pi is online.',
+            ),
+          );
+        }
+      });
+
+      // 3. Listen to updates on this scan document
+      subscription = FirebaseService()
+          .listenToScan(savedScan.id)
+          .listen(
+            (updatedScan) {
+              if (updatedScan.status == ScanStatus.completed) {
+                timeoutTimer?.cancel();
+                subscription?.cancel();
+                if (!completer.isCompleted) {
+                  completer.complete(updatedScan);
+                }
+              }
+            },
+            onError: (err) {
+              timeoutTimer?.cancel();
+              subscription?.cancel();
+              if (!completer.isCompleted) {
+                completer.completeError(err);
+              }
+            },
+          );
+
+      final finalScan = await completer.future;
+
       if (mounted) {
-        // Navigate to result screen with real data from Firebase
+        // Navigate to result screen with real data populated by RPi
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (context) => ResultScreen(scan: savedScan)),
+          MaterialPageRoute(
+            builder: (context) => ResultScreen(scan: finalScan),
+          ),
         );
       }
     } catch (e) {
       if (mounted) {
+        String errMsg = e.toString();
+        if (e is TimeoutException) {
+          errMsg = e.message ?? errMsg;
+        }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error during analysis: $e'),
+            content: Text(errMsg),
             backgroundColor: AppTheme.errorRed,
+            duration: const Duration(seconds: 5),
           ),
         );
       }
     } finally {
+      timeoutTimer?.cancel();
+      subscription?.cancel();
       if (mounted) {
         setState(() => _isAnalyzing = false);
       }
     }
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -184,7 +237,12 @@ class _CaptureScreenState extends State<CaptureScreen> with TickerProviderStateM
           children: [
             // Image or placeholder
             if (_image != null)
-              Image.file(_image!, fit: BoxFit.cover, width: double.infinity, height: double.infinity)
+              Image.file(
+                _image!,
+                fit: BoxFit.cover,
+                width: double.infinity,
+                height: double.infinity,
+              )
             else
               Container(
                 decoration: BoxDecoration(
@@ -220,7 +278,10 @@ class _CaptureScreenState extends State<CaptureScreen> with TickerProviderStateM
                       children: [
                         Icon(Icons.refresh, color: Colors.white, size: 16),
                         SizedBox(width: 4),
-                        Text('Retake', style: TextStyle(color: Colors.white, fontSize: 12)),
+                        Text(
+                          'Retake',
+                          style: TextStyle(color: Colors.white, fontSize: 12),
+                        ),
                       ],
                     ),
                   ),
@@ -258,7 +319,11 @@ class _CaptureScreenState extends State<CaptureScreen> with TickerProviderStateM
                               ),
                             ],
                           ),
-                          child: const Icon(Icons.camera_alt_rounded, color: Colors.white, size: 32),
+                          child: const Icon(
+                            Icons.camera_alt_rounded,
+                            color: Colors.white,
+                            size: 32,
+                          ),
                         ),
                       ),
                     ),
@@ -281,7 +346,11 @@ class _CaptureScreenState extends State<CaptureScreen> with TickerProviderStateM
                             ),
                           ],
                         ),
-                        child: const Icon(Icons.photo_library_rounded, color: Colors.white, size: 28),
+                        child: const Icon(
+                          Icons.photo_library_rounded,
+                          color: Colors.white,
+                          size: 28,
+                        ),
                       ),
                     ),
                   ],
@@ -293,7 +362,10 @@ class _CaptureScreenState extends State<CaptureScreen> with TickerProviderStateM
               Positioned(
                 bottom: 16,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
                     color: AppTheme.successGreen.withOpacity(0.9),
                     borderRadius: BorderRadius.circular(20),
@@ -303,7 +375,14 @@ class _CaptureScreenState extends State<CaptureScreen> with TickerProviderStateM
                     children: [
                       Icon(Icons.check_circle, color: Colors.white, size: 16),
                       SizedBox(width: 6),
-                      Text('Image Captured', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+                      Text(
+                        'Image Captured',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -326,34 +405,55 @@ class _CaptureScreenState extends State<CaptureScreen> with TickerProviderStateM
     const size = 20.0;
     const thickness = 2.5;
 
-    Widget corner(double? top, double? bottom, double? left, double? right,
-        {required bool flipH, required bool flipV}) {
+    Widget corner(
+      double? top,
+      double? bottom,
+      double? left,
+      double? right, {
+      required bool flipH,
+      required bool flipV,
+    }) {
       return Positioned(
-        top: top, bottom: bottom, left: left, right: right,
+        top: top,
+        bottom: bottom,
+        left: left,
+        right: right,
         child: Transform.scale(
           scaleX: flipH ? -1 : 1,
           scaleY: flipV ? -1 : 1,
           child: SizedBox(
-            width: size, height: size,
-            child: CustomPaint(painter: _CornerPainter(color: color, thickness: thickness)),
+            width: size,
+            height: size,
+            child: CustomPaint(
+              painter: _CornerPainter(color: color, thickness: thickness),
+            ),
           ),
         ),
       );
     }
 
-    return Stack(children: [
-      corner(16, null, 16, null, flipH: false, flipV: false),
-      corner(16, null, null, 16, flipH: true, flipV: false),
-      corner(null, 16, 16, null, flipH: false, flipV: true),
-      corner(null, 16, null, 16, flipH: true, flipV: true),
-    ]);
+    return Stack(
+      children: [
+        corner(16, null, 16, null, flipH: false, flipV: false),
+        corner(16, null, null, 16, flipH: true, flipV: false),
+        corner(null, 16, 16, null, flipH: false, flipV: true),
+        corner(null, 16, null, 16, flipH: true, flipV: true),
+      ],
+    );
   }
 
   Widget _buildPatientSelector() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Select Patient', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppTheme.textDark)),
+        const Text(
+          'Select Patient',
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 16,
+            color: AppTheme.textDark,
+          ),
+        ),
         const SizedBox(height: 10),
         InkWell(
           onTap: () {
@@ -375,11 +475,17 @@ class _CaptureScreenState extends State<CaptureScreen> with TickerProviderStateM
               color: Colors.white,
               borderRadius: BorderRadius.circular(16),
               border: Border.all(
-                color: _selectedPatient != null ? AppTheme.primaryBlue.withOpacity(0.4) : Colors.grey.shade200,
+                color: _selectedPatient != null
+                    ? AppTheme.primaryBlue.withOpacity(0.4)
+                    : Colors.grey.shade200,
                 width: _selectedPatient != null ? 1.5 : 1,
               ),
               boxShadow: [
-                BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2)),
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.04),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
               ],
             ),
             child: Row(
@@ -391,7 +497,9 @@ class _CaptureScreenState extends State<CaptureScreen> with TickerProviderStateM
                     shape: BoxShape.circle,
                   ),
                   child: Icon(
-                    _selectedPatient != null ? Icons.person : Icons.person_search_outlined,
+                    _selectedPatient != null
+                        ? Icons.person
+                        : Icons.person_search_outlined,
                     color: AppTheme.primaryBlue,
                     size: 20,
                   ),
@@ -404,19 +512,33 @@ class _CaptureScreenState extends State<CaptureScreen> with TickerProviderStateM
                       Text(
                         _selectedPatient?.name ?? 'Select Patient',
                         style: TextStyle(
-                          color: _selectedPatient != null ? AppTheme.textDark : AppTheme.textSecondary,
+                          color: _selectedPatient != null
+                              ? AppTheme.textDark
+                              : AppTheme.textSecondary,
                           fontSize: 15,
-                          fontWeight: _selectedPatient != null ? FontWeight.w600 : FontWeight.normal,
+                          fontWeight: _selectedPatient != null
+                              ? FontWeight.w600
+                              : FontWeight.normal,
                         ),
                       ),
                       if (_selectedPatient == null)
-                        const Text('Tap to choose from patient list', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                        const Text(
+                          'Tap to choose from patient list',
+                          style: TextStyle(
+                            color: AppTheme.textSecondary,
+                            fontSize: 12,
+                          ),
+                        ),
                     ],
                   ),
                 ),
                 Icon(
-                  _selectedPatient != null ? Icons.check_circle : Icons.keyboard_arrow_right,
-                  color: _selectedPatient != null ? AppTheme.successGreen : Colors.grey,
+                  _selectedPatient != null
+                      ? Icons.check_circle
+                      : Icons.keyboard_arrow_right,
+                  color: _selectedPatient != null
+                      ? AppTheme.successGreen
+                      : Colors.grey,
                 ),
               ],
             ),
@@ -426,14 +548,18 @@ class _CaptureScreenState extends State<CaptureScreen> with TickerProviderStateM
     );
   }
 
-
-
   Widget _buildBottomActions() {
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
       decoration: BoxDecoration(
         color: Colors.white,
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 20, offset: const Offset(0, -4))],
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 20,
+            offset: const Offset(0, -4),
+          ),
+        ],
       ),
       child: Row(
         children: [
@@ -442,11 +568,16 @@ class _CaptureScreenState extends State<CaptureScreen> with TickerProviderStateM
             child: ElevatedButton.icon(
               onPressed: _analyzeAndShowResults,
               icon: const Icon(Icons.biotech_rounded, size: 20),
-              label: const Text('Analyze Scan', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              label: const Text(
+                'Analyze Scan',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppTheme.primaryBlue,
                 foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 elevation: 2,
               ),
@@ -475,14 +606,22 @@ class _CaptureScreenState extends State<CaptureScreen> with TickerProviderStateM
                   child: child,
                 ),
                 child: const Center(
-                  child: Icon(Icons.remove_red_eye_outlined, size: 40, color: AppTheme.primaryBlue),
+                  child: Icon(
+                    Icons.remove_red_eye_outlined,
+                    size: 40,
+                    color: AppTheme.primaryBlue,
+                  ),
                 ),
               ),
             ),
             const SizedBox(height: 32),
             const Text(
               'AI Analysis in Progress...',
-              style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
             ),
             const SizedBox(height: 12),
             const Text(
@@ -494,7 +633,9 @@ class _CaptureScreenState extends State<CaptureScreen> with TickerProviderStateM
               width: 200,
               child: LinearProgressIndicator(
                 backgroundColor: Colors.white24,
-                valueColor: const AlwaysStoppedAnimation<Color>(AppTheme.primaryBlue),
+                valueColor: const AlwaysStoppedAnimation<Color>(
+                  AppTheme.primaryBlue,
+                ),
                 borderRadius: BorderRadius.circular(4),
               ),
             ),
@@ -522,8 +663,16 @@ class _ScanCirclePainter extends CustomPainter {
     final crossPaint = Paint()
       ..color = Colors.white.withOpacity(0.3)
       ..strokeWidth = 1;
-    canvas.drawLine(center - const Offset(20, 0), center + const Offset(20, 0), crossPaint);
-    canvas.drawLine(center - const Offset(0, 20), center + const Offset(0, 20), crossPaint);
+    canvas.drawLine(
+      center - const Offset(20, 0),
+      center + const Offset(20, 0),
+      crossPaint,
+    );
+    canvas.drawLine(
+      center - const Offset(0, 20),
+      center + const Offset(0, 20),
+      crossPaint,
+    );
   }
 
   @override
@@ -583,5 +732,6 @@ class _RadarPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _RadarPainter oldDelegate) => oldDelegate.progress != progress;
+  bool shouldRepaint(covariant _RadarPainter oldDelegate) =>
+      oldDelegate.progress != progress;
 }

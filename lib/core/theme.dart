@@ -74,3 +74,42 @@ class AppTheme {
     );
   }
 }
+
+void showFullScreenImage(BuildContext context, String imageUrl) {
+  Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (context) => Scaffold(
+        backgroundColor: Colors.black,
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.close, color: Colors.white, size: 28),
+            onPressed: () => Navigator.pop(context),
+          ),
+        ),
+        body: Center(
+          child: InteractiveViewer(
+            panEnabled: true,
+            minScale: 0.5,
+            maxScale: 4.0,
+            child: imageUrl.isNotEmpty
+                ? Image.network(
+                    imageUrl,
+                    fit: BoxFit.contain,
+                    loadingBuilder: (context, child, loadingProgress) {
+                      if (loadingProgress == null) return child;
+                      return const Center(child: CircularProgressIndicator(color: Colors.white));
+                    },
+                    errorBuilder: (context, error, stackTrace) {
+                      return const Icon(Icons.image_not_supported_outlined, color: Colors.white54, size: 64);
+                    },
+                  )
+                : const Icon(Icons.image_not_supported_outlined, color: Colors.white54, size: 64),
+          ),
+        ),
+      ),
+    ),
+  );
+}

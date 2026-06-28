@@ -1,20 +1,25 @@
 import 'dart:io';
-import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../models/scan_record.dart';
 import '../../models/patient.dart';
 
 class FirebaseService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
 
-  // Upload scan results with actual image saved in Firebase Storage
-  Future<ScanRecord> uploadScan(File imageFile, String patientId, String patientName) async {
+  // Upload scan initially in "pending" status
+  Future<ScanRecord> uploadScan(
+    File imageFile,
+    String patientId,
+    String patientName,
+  ) async {
     print('DEBUG: Starting uploadScan for $patientName');
     try {
       String scanId = DateTime.now().millisecondsSinceEpoch.toString();
-      
+
       // Upload image to Firebase Storage
       print('DEBUG: Uploading image to Storage under path: scans/$scanId.jpg');
       final Reference storageRef = _storage.ref().child('scans/$scanId.jpg');
@@ -22,27 +27,26 @@ class FirebaseService {
       final TaskSnapshot snapshot = await uploadTask;
       final String imageUrl = await snapshot.ref.getDownloadURL();
       print('DEBUG: Image uploaded successfully. URL: $imageUrl');
- 
-      // Generate random AI result
-      int stage = Random().nextInt(5); // 0 to 4
-      List<String> labels = ['No DR', 'Mild', 'Moderate', 'Severe', 'Proliferative'];
-      double confidence = 75 + Random().nextDouble() * 20;
 
-      // 2. Create record in Firestore
+      final String currentUid = _auth.currentUser?.uid ?? 'dummy_user_123';
+
+      // 2. Create record in Firestore in pending status
       ScanRecord record = ScanRecord(
         id: scanId,
-        userId: 'dummy_user_123',
+        userId: currentUid,
         patientId: patientId,
         patientName: patientName,
         imageUrl: imageUrl,
-        status: ScanStatus.completed,
-        stage: stage,
-        resultLabel: labels[stage],
+        status: ScanStatus.pending,
+        stage: null,
+        resultLabel: null,
         timestamp: DateTime.now(),
-        confidence: confidence,
+        confidence: null,
       );
 
-      print('DEBUG: Saving record to Firestore collection "scans" with ID: $scanId');
+      print(
+        'DEBUG: Saving record to Firestore collection "scans" with ID: $scanId',
+      );
       await _firestore.collection('scans').doc(scanId).set(record.toMap());
       print('DEBUG: Record saved successfully');
 
@@ -54,11 +58,55 @@ class FirebaseService {
       print('DEBUG: Patient updated successfully');
 
       return record;
-      
     } catch (e) {
       print('ERROR: Failed to save scan result: $e');
       rethrow;
     }
+  }
+
+  // Listen to a specific scan document in real-time
+  Stream<ScanRecord> listenToScan(String scanId) {
+    return _firestore
+        .collection('scans')
+        .doc(scanId)
+        .snapshots()
+        .map((snapshot) => ScanRecord.fromFirestore(snapshot));
+  }
+
+  // Get dynamic doctor profile details
+  Future<Map<String, dynamic>?> getDoctorProfile(String uid) async {
+    try {
+      final doc = await _firestore.collection('doctors').doc(uid).get();
+      return doc.data();
+    } catch (e) {
+      print('Error getting doctor profile: $e');
+      return null;
+    }
+  }
+
+  // Update doctor profile details
+  Future<void> updateDoctorProfile({
+    required String uid,
+    required String name,
+    required String phone,
+  }) async {
+    try {
+      await _firestore.collection('doctors').doc(uid).update({
+        'name': name,
+        'phone': phone,
+      });
+    } catch (e) {
+      print('Error updating doctor profile: $e');
+      rethrow;
+    }
+  }
+
+  // Helper method to just upload image (used in custom flows if needed)
+  Future<String> uploadImageOnly(File imageFile, String scanId) async {
+    final Reference storageRef = _storage.ref().child('scans/$scanId.jpg');
+    final UploadTask uploadTask = storageRef.putFile(imageFile);
+    final TaskSnapshot snapshot = await uploadTask;
+    return await snapshot.ref.getDownloadURL();
   }
 
   // Create new patient
@@ -111,10 +159,11 @@ class FirebaseService {
   Future<void> deletePatient(String patientId) async {
     try {
       // 1. Delete all scans for this patient from Storage and Firestore
-      final scansSnapshot = await _firestore.collection('scans')
+      final scansSnapshot = await _firestore
+          .collection('scans')
           .where('patientId', isEqualTo: patientId)
           .get();
-      
+
       for (var doc in scansSnapshot.docs) {
         String scanId = doc.id;
         // Delete from Storage
@@ -141,8 +190,10 @@ class FirebaseService {
         .collection('patients')
         .orderBy('name')
         .snapshots()
-        .map((snapshot) =>
-            snapshot.docs.map((doc) => Patient.fromFirestore(doc)).toList());
+        .map(
+          (snapshot) =>
+              snapshot.docs.map((doc) => Patient.fromFirestore(doc)).toList(),
+        );
   }
 
   // Get scans for a specific patient, sorted chronologically in Dart to avoid index issues
@@ -152,12 +203,13 @@ class FirebaseService {
         .where('patientId', isEqualTo: patientId)
         .snapshots()
         .map((snapshot) {
-          final scans = snapshot.docs.map((doc) => ScanRecord.fromFirestore(doc)).toList();
+          final scans = snapshot.docs
+              .map((doc) => ScanRecord.fromFirestore(doc))
+              .toList();
           scans.sort((a, b) => b.timestamp.compareTo(a.timestamp));
           return scans;
         });
   }
-
 
   // Stream of recent scans
   Stream<List<ScanRecord>> getRecentScans() {
@@ -166,8 +218,11 @@ class FirebaseService {
         .orderBy('timestamp', descending: true)
         .limit(10)
         .snapshots()
-        .map((snapshot) =>
-            snapshot.docs.map((doc) => ScanRecord.fromFirestore(doc)).toList());
+        .map(
+          (snapshot) => snapshot.docs
+              .map((doc) => ScanRecord.fromFirestore(doc))
+              .toList(),
+        );
   }
 
   // Stream of all scans for dashboard counts
@@ -175,7 +230,10 @@ class FirebaseService {
     return _firestore
         .collection('scans')
         .snapshots()
-        .map((snapshot) =>
-            snapshot.docs.map((doc) => ScanRecord.fromFirestore(doc)).toList());
+        .map(
+          (snapshot) => snapshot.docs
+              .map((doc) => ScanRecord.fromFirestore(doc))
+              .toList(),
+        );
   }
 }

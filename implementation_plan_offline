@@ -1,0 +1,549 @@
+# خطة النظام الأوفلاين الكامل — Offline-First Architecture
+
+## الهدف
+تحويل التطبيق ليعمل **أوفلاين بالكامل** كنظام أساسي:
+- الجوال يتواصل مع الرزباري باي عبر **Wi-Fi محلي مباشر** (بدون إنترنت).
+- كل البيانات تُحفظ **محلياً على الجوال** (Hive).
+- Firebase يُستخدم فقط **كنسخ احتياطي** عند توفر الإنترنت.
+
+---
+
+## البنية المعمارية
+
+```mermaid
+graph LR
+    subgraph "📱 الجوال"
+        A[التقاط صورة] --> B[إرسال HTTP للرزباري باي]
+        B --> C[استقبال النتيجة]
+        C --> D[(Hive - تخزين محلي)]
+        D -->|"عند توفر إنترنت"| E[(Firebase - نسخ احتياطي)]
+    end
+
+    subgraph "🍓 رزباري باي"
+        F[FastAPI Server] --> G[نموذج AI]
+    end
+
+    B <-->|"Wi-Fi محلي"| F
+```
+
+**الدورة الكاملة:**
+1. الدكتور يلتقط صورة العين.
+2. الجوال يرسلها للرزباري باي عبر Wi-Fi محلي.
+3. الرزباري باي يحلل الصورة ويرجع النتيجة (JSON).
+4. الجوال يحفظ كل شيء (مريض + فحص + صورة) في **Hive محلياً**.
+5. لاحقاً عند توفر إنترنت → يرفع البيانات لـ Firebase كنسخة احتياطية.
+
+---
+
+## الملفات الجديدة والمعدّلة
+
+### 1. المكتبات المطلوبة
+
+#### [MODIFY] [pubspec.yaml](file:///c:/Users/Hashem/Desktop/shawan_app/pubspec.yaml)
+
+```yaml
+dependencies:
+  # المكتبات الحالية تبقى كما هي
+  
+  # جديد:
+  hive: ^2.2.3              # قاعدة بيانات محلية
+  hive_flutter: ^1.1.0       # ربط Hive مع Flutter
+  http: ^1.4.0               # إرسال HTTP للرزباري باي
+  connectivity_plus: ^6.1.4  # كشف توفر الإنترنت للمزامنة
+```
+
+---
+
+### 2. خدمة التخزين المحلي
+
+#### [NEW] [local_database.dart](file:///c:/Users/Hashem/Desktop/shawan_app/lib/core/services/local_database.dart)
+
+قاعدة البيانات المحلية — تخزن كل شيء على الجوال بدون إنترنت.
+
+**3 صناديق تخزين (Boxes):**
+
+| الصندوق | المحتوى |
+|---|---|
+| `patients` | كل بيانات المرضى |
+| `scans` | كل نتائج الفحوصات |
+| `pending_sync` | قائمة العناصر التي لم تُرفع لـ Firebase بعد |
+
+**الوظائف:**
+```dart
+class LocalDatabase {
+  static Future<void> init()                    // تهيئة Hive عند بدء التطبيق
+  
+  // المرضى
+  Future<void> savePatient(Patient)              // حفظ مريض
+  List<Patient> getAllPatients()                  // جلب كل المرضى
+  Future<void> updatePatient(Patient)            // تعديل مريض
+  Future<void> deletePatient(String id)          // حذف مريض
+  
+  // الفحوصات
+  Future<void> saveScan(ScanRecord)              // حفظ فحص
+  List<ScanRecord> getPatientScans(String id)    // فحوصات مريض معين
+  List<ScanRecord> getAllScans()                  // كل الفحوصات
+  List<ScanRecord> getRecentScans({int limit})   // آخر الفحوصات
+  
+  // المزامنة
+  Future<void> addToPendingSync(String scanId)   // إضافة لقائمة الانتظار
+  Future<void> markAsSynced(String scanId)       // تعليم كـ "تمت المزامنة"
+  List<String> getPendingSyncIds()               // العناصر المعلقة
+}
+```
+
+---
+
+### 3. خدمة الاتصال بالرزباري باي
+
+#### [NEW] [rpi_service.dart](file:///c:/Users/Hashem/Desktop/shawan_app/lib/core/services/rpi_service.dart)
+
+خدمة إرسال الصورة للرزباري باي واستقبال نتيجة الفحص عبر HTTP محلي.
+
+**الوظائف:**
+```dart
+class RpiService {
+  // عنوان الرزباري باي — يُغيَّر من ملف واحد فقط هنا
+  static const String rpiIp = '192.168.1.50';
+  static const int port = 8000;
+  static String get baseUrl => 'http://$rpiIp:$port';
+
+  /// إرسال صورة وتلقي نتيجة التشخيص
+  Future<Map<String, dynamic>> analyzeImage(File imageFile)
+
+  /// فحص هل الرزباري باي شغال ومتاح
+  Future<bool> isAvailable()
+}
+```
+
+> [!TIP]
+> عنوان IP الرزباري باي موجود في سطر واحد فقط (`rpiIp`) — عند تغيير الشبكة أو الجهاز، يكفي تعديل هذا السطر فقط ثم إعادة بناء التطبيق (`flutter build apk`).
+
+**آلية التواصل:**
+```
+الجوال يرسل:
+  POST http://192.168.1.50:8000/predict
+  Body: صورة العين (multipart file)
+
+الرزباري باي يرد:
+  {
+    "status": "completed",
+    "resultLabel": "Moderate",
+    "stage": 2,
+    "confidence": 94.2
+  }
+```
+
+---
+
+### 4. خدمة المزامنة مع Firebase
+
+#### [NEW] [sync_service.dart](file:///c:/Users/Hashem/Desktop/shawan_app/lib/core/services/sync_service.dart)
+
+تراقب الإنترنت. لما يتوفر → ترفع البيانات المحلية لـ Firebase كنسخة احتياطية.
+
+**الوظائف:**
+```dart
+class SyncService {
+  /// بدء مراقبة الاتصال — تُستدعى مرة واحدة عند تشغيل التطبيق
+  void startAutoSync()
+  
+  /// مزامنة يدوية — عند ضغط زر "Sync Now"
+  Future<void> syncNow()
+  
+  /// عدد العناصر المعلقة
+  int get pendingCount
+  
+  /// هل الإنترنت متاح حالياً
+  bool get isOnline
+}
+```
+
+**آلية العمل:**
+1. يستمع لحالة الاتصال عبر `connectivity_plus`.
+2. عند اكتشاف إنترنت ← يقرأ `pending_sync` من Hive.
+3. يرفع كل فحص معلق لـ Firebase (صورة ← Storage، بيانات ← Firestore).
+4. عند النجاح ← يحذف الفحص من قائمة الانتظار.
+
+---
+
+### 5. تعديل الملفات الحالية
+
+---
+
+#### [MODIFY] [main.dart](file:///c:/Users/Hashem/Desktop/shawan_app/lib/main.dart)
+
+إضافة تهيئة Hive وبدء المزامنة:
+
+```dart
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(...);
+  await LocalDatabase.init();       // تهيئة التخزين المحلي
+  SyncService().startAutoSync();    // بدء مراقبة الإنترنت للمزامنة
+  runApp(MainApp(...));
+}
+```
+
+---
+
+#### [MODIFY] [capture_screen.dart](file:///c:/Users/Hashem/Desktop/shawan_app/lib/features/scan/capture_screen.dart)
+
+**التغيير الرئيسي:** بدلاً من رفع الصورة لـ Firebase والاستماع للنتيجة، يتم:
+
+```dart
+Future<void> _analyzeAndShowResults() async {
+  // 1. فحص هل الرزباري باي شغال
+  final isAvailable = await RpiService().isAvailable();
+  if (!isAvailable) {
+    showError('الرزباري باي غير متاح. تأكد من اتصالك بنفس شبكة Wi-Fi');
+    return;
+  }
+  
+  // 2. إرسال الصورة للرزباري باي مباشرة
+  final result = await RpiService().analyzeImage(_image!);
+  
+  // 3. بناء ScanRecord من النتيجة
+  final scan = ScanRecord(
+    id: DateTime.now().millisecondsSinceEpoch.toString(),
+    resultLabel: result['resultLabel'],
+    stage: result['stage'],
+    confidence: result['confidence'],
+    // ...
+  );
+  
+  // 4. حفظ محلياً في Hive
+  await LocalDatabase().saveScan(scan);
+  
+  // 5. إضافة لقائمة انتظار المزامنة
+  await LocalDatabase().addToPendingSync(scan.id);
+  
+  // 6. عرض النتيجة
+  Navigator.push(... ResultScreen(scan: scan));
+}
+```
+
+> [!NOTE]
+> هذا يلغي تماماً: رفع الصورة لـ Firebase Storage → انتظار Firestore → الاستماع للتحديثات.
+> بدلاً من ذلك: إرسال مباشر → نتيجة فورية خلال ثانيتين.
+
+---
+
+#### [MODIFY] [firebase_service.dart](file:///c:/Users/Hashem/Desktop/shawan_app/lib/core/services/firebase_service.dart)
+
+- إلغاء `uploadScan()` و `listenToScan()` (لم تعد مطلوبة).
+- الإبقاء على `uploadImageOnly()` لاستخدامها في المزامنة فقط.
+- الإبقاء على وظائف الدكتور (`getDoctorProfile`, `updateDoctorProfile`) والتسجيل.
+
+---
+
+#### [MODIFY] [patient_list_screen.dart](file:///c:/Users/Hashem/Desktop/shawan_app/lib/features/patients/patient_list_screen.dart)
+
+تغيير مصدر البيانات من Firebase Stream إلى **Hive محلي**:
+
+```dart
+// قبل (Firebase):
+StreamBuilder(stream: FirebaseService().getPatients(), ...)
+
+// بعد (Hive محلي):
+final patients = LocalDatabase().getAllPatients();
+ListView.builder(itemCount: patients.length, ...)
+```
+
+---
+
+#### [MODIFY] [patient_detail_screen.dart](file:///c:/Users/Hashem/Desktop/shawan_app/lib/features/patients/patient_detail_screen.dart)
+
+نفس التغيير — قراءة فحوصات المريض من Hive بدلاً من Firestore.
+
+---
+
+#### [MODIFY] [dashboard_screen.dart](file:///c:/Users/Hashem/Desktop/shawan_app/lib/features/dashboard/dashboard_screen.dart)
+
+- إحصائيات الداشبورد تُقرأ من Hive محلياً.
+- إضافة **مؤشر حالة المزامنة** صغير في الأعلى:
+  - `✅ All synced` — كل شيء مرفوع لـ Firebase
+  - `🔄 3 pending` — 3 فحوصات بانتظار الرفع
+  - زر `Sync Now` للمزامنة اليدوية
+
+---
+
+#### [MODIFY] [history_screen.dart](file:///c:/Users/Hashem/Desktop/shawan_app/lib/features/history/history_screen.dart)
+
+قراءة سجل الفحوصات من Hive المحلي بدلاً من Firestore.
+
+---
+
+### 6. إعداد الرزباري باي بالكامل (Raspberry Pi Full Setup)
+
+---
+
+#### الخطوة 1: تثبيت المتطلبات على الرزباري باي
+
+افتح الطرفية (Terminal) على الرزباري باي ونفّذ:
+
+```bash
+# تحديث النظام
+sudo apt update && sudo apt upgrade -y
+
+# تثبيت Python ومدير الحزم
+sudo apt install python3 python3-pip -y
+
+# تثبيت مكتبات السيرفر
+pip3 install fastapi uvicorn python-multipart pillow
+
+# تثبيت مكتبات الذكاء الاصطناعي
+pip3 install tensorflow numpy
+
+# إذا كان النموذج بصيغة .h5
+pip3 install keras
+```
+
+---
+
+#### الخطوة 2: هيكل المجلد على الرزباري باي
+
+```
+/home/pi/shawan_server/
+│
+├── server.py          ← السيرفر الرئيسي
+├── model/
+│   └── dr_model.h5    ← نموذج الذكاء الاصطناعي الموجود
+└── temp/              ← مجلد مؤقت لتخزين الصور أثناء المعالجة
+```
+
+```bash
+# إنشاء المجلد
+mkdir -p /home/pi/shawan_server/model
+mkdir -p /home/pi/shawan_server/temp
+
+# نسخ ملف النموذج
+cp /path/to/dr_model.h5 /home/pi/shawan_server/model/
+```
+
+---
+
+#### الخطوة 3: كود السيرفر الكامل `server.py`
+
+```python
+import io
+import os
+import numpy as np
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.responses import JSONResponse
+from PIL import Image
+import uvicorn
+
+# ==========================================
+# تحميل نموذج الذكاء الاصطناعي عند بدء السيرفر
+# ==========================================
+import tensorflow as tf
+
+MODEL_PATH = '/home/pi/shawan_server/model/dr_model.h5'
+IMG_SIZE = (224, 224)  # حجم الصورة الذي يتوقعه النموذج — عدّله حسب نموذجك
+
+# أسماء المراحل الخمسة بالترتيب (0 → 4)
+CLASS_NAMES = ['No DR', 'Mild', 'Moderate', 'Severe', 'Proliferative']
+
+print("Loading AI model...")
+model = tf.keras.models.load_model(MODEL_PATH)
+print("✅ Model loaded successfully!")
+
+# ==========================================
+# إنشاء السيرفر
+# ==========================================
+app = FastAPI(
+    title="DR-Check AI Server",
+    description="Diabetic Retinopathy Detection API",
+    version="1.0.0"
+)
+
+def preprocess_image(image_bytes: bytes) -> np.ndarray:
+    """تحويل الصورة المستقبلة إلى tensor جاهز للنموذج"""
+    image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+    image = image.resize(IMG_SIZE)
+    image_array = np.array(image, dtype=np.float32)
+    image_array = image_array / 255.0          # Normalize
+    image_array = np.expand_dims(image_array, axis=0)  # إضافة batch dimension
+    return image_array
+
+
+@app.get("/health")
+async def health_check():
+    """نقطة فحص — الجوال يستخدمها للتأكد من أن السيرفر شغال"""
+    return {
+        "status": "online",
+        "device": "Raspberry Pi",
+        "model": "DR-Check v1.0"
+    }
+
+
+@app.post("/predict")
+async def predict(image: UploadFile = File(...)):
+    """استقبال صورة العين وإرجاع نتيجة التشخيص"""
+    try:
+        # 1. قراءة ملف الصورة
+        image_bytes = await image.read()
+
+        if len(image_bytes) == 0:
+            raise HTTPException(status_code=400, detail="Empty image file")
+
+        # 2. معالجة الصورة
+        processed = preprocess_image(image_bytes)
+
+        # 3. تشغيل النموذج
+        predictions = model.predict(processed)
+        stage = int(np.argmax(predictions[0]))       # المرحلة (0-4)
+        confidence = float(np.max(predictions[0]) * 100)  # نسبة الثقة
+        result_label = CLASS_NAMES[stage]
+
+        # 4. إرجاع النتيجة للجوال
+        return JSONResponse(content={
+            "status": "completed",
+            "resultLabel": result_label,
+            "stage": stage,
+            "confidence": round(confidence, 1)
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}")
+
+
+if __name__ == "__main__":
+    print("Starting DR-Check AI Server on port 8000...")
+    uvicorn.run(
+        app,
+        host="0.0.0.0",  # يسمح بالاتصال من أي جهاز على الشبكة
+        port=8000,
+        log_level="info"
+    )
+```
+
+---
+
+#### الخطوة 4: تشغيل السيرفر يدوياً (للاختبار)
+
+```bash
+cd /home/pi/shawan_server
+python3 server.py
+```
+
+إذا ظهرت هذه الرسالة فالسيرفر يعمل:
+```
+Loading AI model...
+✅ Model loaded successfully!
+Starting DR-Check AI Server on port 8000...
+INFO: Uvicorn running on http://0.0.0.0:8000
+```
+
+اختبر من متصفح الكمبيوتر (على نفس الشبكة):
+```
+http://192.168.1.50:8000/health
+http://192.168.1.50:8000/docs     ← واجهة اختبار تلقائية من FastAPI
+```
+
+---
+
+#### الخطوة 5: تشغيل السيرفر تلقائياً عند إقلاع الرزباري باي (Auto-Start)
+
+نستخدم `systemd` لتشغيل السيرفر تلقائياً كخدمة في الخلفية عند كل تشغيل:
+
+```bash
+# إنشاء ملف الخدمة
+sudo nano /etc/systemd/system/drcheck.service
+```
+
+أضف هذا المحتوى في الملف:
+```ini
+[Unit]
+Description=DR-Check AI Server
+After=network.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/shawan_server
+ExecStart=/usr/bin/python3 /home/pi/shawan_server/server.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+فعّل الخدمة:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable drcheck.service    # تشغيل تلقائي عند الإقلاع
+sudo systemctl start drcheck.service     # تشغيل الآن
+sudo systemctl status drcheck.service   # فحص الحالة
+```
+
+الآن السيرفر سيبدأ تلقائياً في كل مرة يُشغَّل فيها الرزباري باي، حتى بدون تدخل يدوي.
+
+---
+
+#### الخطوة 6: فتح المنفذ في الجدار الناري
+
+```bash
+# السماح بالاتصال على المنفذ 8000
+sudo ufw allow 8000
+sudo ufw reload
+```
+
+---
+
+#### ملاحظات مهمة على `server.py`
+
+> [!IMPORTANT]
+> **حجم الصورة `IMG_SIZE`:** يجب أن يطابق الحجم الذي تم تدريب النموذج عليه. إذا كان النموذج يتوقع `(224, 224)` أو `(256, 256)` أو غير ذلك — عدّل هذا السطر فقط.
+
+> [!IMPORTANT]
+> **`CLASS_NAMES`:** يجب أن يطابق ترتيب المراحل الذي تم تدريب النموذج عليه بالضبط (0 = No DR, 1 = Mild, ...). تأكد من هذا مع صاحب النموذج.
+
+> [!TIP]
+> يمكن اختبار السيرفر بدون جوال عبر `http://192.168.1.50:8000/docs` — هذه الصفحة تسمح برفع صورة تجريبية مباشرة من المتصفح والحصول على النتيجة.
+
+---
+
+## ترتيب التنفيذ
+
+| # | المهمة | الملف |
+|---|---|---|
+| 1 | إضافة المكتبات الجديدة | `pubspec.yaml` |
+| 2 | إنشاء `LocalDatabase` | `local_database.dart` |
+| 3 | إنشاء `RpiService` | `rpi_service.dart` |
+| 4 | إنشاء `SyncService` | `sync_service.dart` |
+| 5 | تعديل `main.dart` | `main.dart` |
+| 6 | تعديل `capture_screen.dart` — النقطة الأهم | `capture_screen.dart` |
+| 7 | تعديل `patient_list_screen.dart` | `patient_list_screen.dart` |
+| 8 | تعديل `patient_detail_screen.dart` | `patient_detail_screen.dart` |
+| 9 | تعديل `dashboard_screen.dart` + مؤشر المزامنة | `dashboard_screen.dart` |
+| 10 | تعديل `history_screen.dart` | `history_screen.dart` |
+| 11 | تنظيف `firebase_service.dart` | `firebase_service.dart` |
+
+---
+
+## خطة التحقق
+
+1. **تشغيل mock server** على الكمبيوتر لمحاكاة الرزباري باي واختبار الاتصال.
+2. **إضافة مريض وفحص بدون إنترنت** ← التأكد من حفظهم محلياً.
+3. **تشغيل الإنترنت** ← التأكد من رفع البيانات لـ Firebase تلقائياً.
+4. `flutter analyze` + `flutter build apk`.
+
+---
+
+## Open Questions
+
+> [!NOTE]
+> **سؤال 1 (محلول):** عنوان IP الرزباري باي سيكون ثابتاً في سطر واحد فقط داخل `rpi_service.dart` — أي تغيير مستقبلي يكون في مكان واحد فقط.؟
+
+> [!NOTE]
+> **سؤال 2 (محلول):** النموذج موجود ويعمل على الرزباري باي. الكود أعلاه في `server.py` يفترض صيغة `.h5` ويستخدم `tf.keras.models.load_model()`. إذا كانت الصيغة مختلفة (`tflite` أو `SavedModel`) يتم تعديل دالة التحميل فقط.
+
+> [!IMPORTANT]
+> **سؤال 3:** هل نبدأ التنفيذ الآن، أم هذه الخطة كمرجع مستقبلي فقط؟
+```

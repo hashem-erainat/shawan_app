@@ -44,4 +44,32 @@ class Patient {
       'gender': gender,
     };
   }
+
+  Map<String, dynamic> toLocalMap() {
+    return {
+      'id': id,
+      'name': name,
+      'createdAt': createdAt.millisecondsSinceEpoch,
+      'lastScanDate': lastScanDate?.millisecondsSinceEpoch,
+      'phone': phone,
+      'age': age,
+      'gender': gender,
+    };
+  }
+
+  factory Patient.fromLocalMap(Map<dynamic, dynamic> map) {
+    return Patient(
+      id: map['id'] as String? ?? '',
+      name: map['name'] as String? ?? 'Unknown',
+      createdAt: map['createdAt'] != null
+          ? DateTime.fromMillisecondsSinceEpoch(map['createdAt'] as int)
+          : DateTime.now(),
+      lastScanDate: map['lastScanDate'] != null
+          ? DateTime.fromMillisecondsSinceEpoch(map['lastScanDate'] as int)
+          : null,
+      phone: map['phone'] as String?,
+      age: map['age'] as int?,
+      gender: map['gender'] as String?,
+    );
+  }
 }

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
-import '../../core/services/firebase_service.dart';
+import '../../core/services/local_database.dart';
 import '../../models/patient.dart';
 import 'patient_detail_screen.dart';
 import 'add_patient_screen.dart';
@@ -52,17 +52,15 @@ class _PatientListScreenState extends State<PatientListScreen> {
             ),
           ),
           Expanded(
-            child: StreamBuilder<List<Patient>>(
-              stream: FirebaseService().getPatients(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (!snapshot.hasData || snapshot.data!.isEmpty) {
+            child: ValueListenableBuilder(
+              valueListenable: LocalDatabase().getPatientsListenable(),
+              builder: (context, box, child) {
+                final patients = LocalDatabase().getAllPatients();
+                if (patients.isEmpty) {
                   return _buildEmptyState();
                 }
 
-                final filteredPatients = snapshot.data!
+                final filteredPatients = patients
                     .where((p) => p.name.toLowerCase().contains(_searchQuery))
                     .toList();
 
@@ -96,7 +94,7 @@ class _PatientListScreenState extends State<PatientListScreen> {
       },
       onDismissed: (direction) async {
         try {
-          await FirebaseService().deletePatient(patient.id);
+          await LocalDatabase().deletePatient(patient.id);
         } catch (e) {
           if (context.mounted) {
             ScaffoldMessenger.of(context).showSnackBar(

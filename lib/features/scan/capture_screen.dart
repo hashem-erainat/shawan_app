@@ -8,7 +8,10 @@ import '../../models/scan_record.dart';
 import '../patients/patient_list_screen.dart';
 import 'custom_camera_screen.dart';
 import 'result_screen.dart';
-import '../../core/services/firebase_service.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../../core/services/local_database.dart';
+import '../../core/services/rpi_service.dart';
+import '../../core/services/pdf_report_service.dart';
 
 class CaptureScreen extends StatefulWidget {
   const CaptureScreen({super.key});
@@ -19,7 +22,8 @@ class CaptureScreen extends StatefulWidget {
 
 class _CaptureScreenState extends State<CaptureScreen>
     with TickerProviderStateMixin {
-  File? _image;
+  File? _leftImage;
+  File? _rightImage;
   bool _isAnalyzing = false;
   Patient? _selectedPatient;
   late AnimationController _pulseController;
@@ -53,34 +57,92 @@ class _CaptureScreenState extends State<CaptureScreen>
     super.dispose();
   }
 
-  Future<void> _pickImage() async {
+  Future<void> _pickImage(bool isLeft) async {
     final File? result = await Navigator.push<File>(
       context,
-      MaterialPageRoute(builder: (context) => const CustomCameraScreen()),
+      MaterialPageRoute(
+        builder: (context) => CustomCameraScreen(
+          eyeName: isLeft ? 'Left Eye (OS)' : 'Right Eye (OD)',
+        ),
+      ),
     );
 
     if (result != null) {
       setState(() {
-        _image = result;
+        if (isLeft) {
+          _leftImage = result;
+        } else {
+          _rightImage = result;
+        }
       });
     }
   }
 
-  Future<void> _pickFromGallery() async {
+  Future<void> _pickFromGallery(bool isLeft) async {
     final picker = ImagePicker();
     final pickedFile = await picker.pickImage(source: ImageSource.gallery);
     if (pickedFile != null) {
       setState(() {
-        _image = File(pickedFile.path);
+        if (isLeft) {
+          _leftImage = File(pickedFile.path);
+        } else {
+          _rightImage = File(pickedFile.path);
+        }
       });
     }
   }
 
+  Future<void> _showIpSettingsDialog() async {
+    final rpiService = RpiService();
+    final currentIp = await rpiService.getIpAddress();
+    final controller = TextEditingController(text: currentIp);
+
+    if (!mounted) return;
+
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Raspberry Pi IP Settings'),
+          content: TextField(
+            controller: controller,
+            decoration: const InputDecoration(
+              labelText: 'IP Address',
+              hintText: 'e.g., 10.42.0.1',
+            ),
+            keyboardType: TextInputType.text,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                await rpiService.setIpAddress(controller.text);
+                if (mounted) {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('IP updated to ${controller.text}'),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Future<void> _analyzeAndShowResults() async {
-    if (_image == null || _selectedPatient == null) {
+    if (_leftImage == null || _rightImage == null || _selectedPatient == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('Please capture an image and select a patient'),
+          content: const Text('Please capture both images (OS and OD) and select a patient'),
           backgroundColor: AppTheme.errorRed,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(
@@ -93,81 +155,161 @@ class _CaptureScreenState extends State<CaptureScreen>
 
     setState(() => _isAnalyzing = true);
 
-    StreamSubscription<ScanRecord>? subscription;
-    Timer? timeoutTimer;
-
     try {
-      // 1. Upload scan initially in pending status
-      final ScanRecord savedScan = await FirebaseService().uploadScan(
-        _image!,
-        _selectedPatient!.id,
-        _selectedPatient!.name,
-      );
-
-      final completer = Completer<ScanRecord>();
-
-      // 2. Set up 120-second timeout
-      timeoutTimer = Timer(const Duration(seconds: 120), () {
-        subscription?.cancel();
-        if (!completer.isCompleted) {
-          completer.completeError(
-            TimeoutException(
-              'AI model analysis timed out. Please check if the Raspberry Pi is online.',
+      // 1. Verify if the Raspberry Pi server is reachable
+      final rpiService = RpiService();
+      final isAvailable = await rpiService.isAvailable();
+      
+      if (!isAvailable) {
+        setState(() => _isAnalyzing = false);
+        if (mounted) {
+          final currentIp = await rpiService.getIpAddress();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Cannot reach Raspberry Pi at $currentIp.'),
+              backgroundColor: AppTheme.errorRed,
+              behavior: SnackBarBehavior.floating,
+              action: SnackBarAction(
+                label: 'Settings',
+                textColor: Colors.white,
+                onPressed: _showIpSettingsDialog,
+              ),
+              duration: const Duration(seconds: 8),
             ),
           );
         }
+        return;
+      }
+
+      // 2. Upload both images and get predictions from local Pi server
+      final result = await rpiService.analyzeDualImages(
+        leftEye: _leftImage!,
+        rightEye: _rightImage!,
+      );
+      
+      print('DEBUG: analyzeDualImages result = $result');
+      
+      Map<String, dynamic> parseEyeResult(dynamic eyeData) {
+        if (eyeData is Map) {
+          return Map<String, dynamic>.from(eyeData);
+        } else if (eyeData is String) {
+          final label = eyeData.trim().toLowerCase();
+          int stage = 0;
+          String resultLabel = 'No DR';
+          
+          if (label.contains('proliferative')) {
+            stage = 4;
+            resultLabel = 'Proliferative';
+          } else if (label.contains('severe')) {
+            stage = 3;
+            resultLabel = 'Severe';
+          } else if (label.contains('moderate')) {
+            stage = 2;
+            resultLabel = 'Moderate';
+          } else if (label.contains('mild')) {
+            stage = 1;
+            resultLabel = 'Mild';
+          } else if (label.contains('ok') || label.contains('no dr') || label.contains('healthy') || label.contains('normal')) {
+            stage = 0;
+            resultLabel = 'No DR';
+          } else {
+            // Default/Fallback
+            resultLabel = eyeData;
+            stage = 0;
+          }
+          
+          return {
+            'stage': stage,
+            'resultLabel': resultLabel,
+            'confidence': 100.0,
+          };
+        } else {
+          throw FormatException('Unexpected eye data type: ${eyeData?.runtimeType}');
+        }
+      }
+
+      Map<String, dynamic> leftResult;
+      Map<String, dynamic> rightResult;
+      try {
+        leftResult = parseEyeResult(result['left']);
+        rightResult = parseEyeResult(result['right']);
+      } catch (castError) {
+        print('ERROR: Parsing failed on result maps. Result was: $result, Error: $castError');
+        throw FormatException(
+          'Pi returned unexpected format: '
+          'left is ${result['left']?.runtimeType}, '
+          'right is ${result['right']?.runtimeType}. '
+          'Raw: $result. Details: $castError'
+        );
+      }
+      
+      final String currentUid = FirebaseAuth.instance.currentUser?.uid ?? 'offline_user_123';
+      final String scanId = DateTime.now().millisecondsSinceEpoch.toString();
+
+      // 3. Create ScanRecord locally (leftImageUrl and rightImageUrl store local file paths)
+      final scan = ScanRecord(
+        id: scanId,
+        userId: currentUid,
+        patientId: _selectedPatient!.id,
+        patientName: _selectedPatient!.name,
+        status: ScanStatus.completed,
+        timestamp: DateTime.now(),
+        leftImageUrl: _leftImage!.path,
+        leftStage: leftResult['stage'] as int?,
+        leftResultLabel: leftResult['resultLabel'] as String?,
+        leftConfidence: (leftResult['confidence'] as num?)?.toDouble(),
+        rightImageUrl: _rightImage!.path,
+        rightStage: rightResult['stage'] as int?,
+        rightResultLabel: rightResult['resultLabel'] as String?,
+        rightConfidence: (rightResult['confidence'] as num?)?.toDouble(),
+      );
+
+      // 4. Save to local DB (Hive)
+      await LocalDatabase().saveScan(scan);
+
+      // [AUTO] Background PDF generation - fire and forget, non-blocking
+      PdfReportService().saveReportLocally(scan).then((file) {
+        if (file != null) {
+          print('DEBUG: PDF report auto-saved to ${file.path}');
+        }
       });
 
-      // 3. Listen to updates on this scan document
-      subscription = FirebaseService()
-          .listenToScan(savedScan.id)
-          .listen(
-            (updatedScan) {
-              if (updatedScan.status == ScanStatus.completed) {
-                timeoutTimer?.cancel();
-                subscription?.cancel();
-                if (!completer.isCompleted) {
-                  completer.complete(updatedScan);
-                }
-              }
-            },
-            onError: (err) {
-              timeoutTimer?.cancel();
-              subscription?.cancel();
-              if (!completer.isCompleted) {
-                completer.completeError(err);
-              }
-            },
-          );
+      // 5. Update patient's last scan date locally
+      final updatedPatient = Patient(
+        id: _selectedPatient!.id,
+        name: _selectedPatient!.name,
+        createdAt: _selectedPatient!.createdAt,
+        lastScanDate: scan.timestamp,
+        phone: _selectedPatient!.phone,
+        age: _selectedPatient!.age,
+        gender: _selectedPatient!.gender,
+      );
+      await LocalDatabase().savePatient(updatedPatient);
 
-      final finalScan = await completer.future;
+      // 6. Queue the scan for background synchronization
+      await LocalDatabase().addToPendingSync(scan.id, 'scan');
 
       if (mounted) {
-        // Navigate to result screen with real data populated by RPi
+        // Navigate to result screen with local scan record
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-            builder: (context) => ResultScreen(scan: finalScan),
+            builder: (context) => ResultScreen(scan: scan),
           ),
         );
       }
     } catch (e) {
       if (mounted) {
-        String errMsg = e.toString();
-        if (e is TimeoutException) {
-          errMsg = e.message ?? errMsg;
-        }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(errMsg),
+            content: Text('Analysis failed: $e'),
             backgroundColor: AppTheme.errorRed,
             duration: const Duration(seconds: 5),
+            behavior: SnackBarBehavior.floating,
           ),
         );
       }
     } finally {
-      timeoutTimer?.cancel();
-      subscription?.cancel();
       if (mounted) {
         setState(() => _isAnalyzing = false);
       }
@@ -216,180 +358,199 @@ class _CaptureScreenState extends State<CaptureScreen>
   }
 
   Widget _buildCameraViewfinder() {
-    return Container(
-      width: double.infinity,
-      height: 320,
-      decoration: BoxDecoration(
-        color: Colors.black,
-        borderRadius: BorderRadius.circular(28),
-        boxShadow: [
-          BoxShadow(
-            color: AppTheme.primaryBlue.withOpacity(0.3),
-            blurRadius: 20,
-            offset: const Offset(0, 8),
+    return Row(
+      children: [
+        // Left Eye (OS)
+        Expanded(
+          child: _buildSingleViewfinder(
+            title: 'Left Eye (OS)',
+            image: _leftImage,
+            onCapture: () => _pickImage(true),
+            onGallery: () => _pickFromGallery(true),
+            onClear: () => setState(() => _leftImage = null),
           ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(28),
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            // Image or placeholder
-            if (_image != null)
-              Image.file(
-                _image!,
-                fit: BoxFit.cover,
-                width: double.infinity,
-                height: double.infinity,
-              )
-            else
-              Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [const Color(0xFF0D1B2A), const Color(0xFF1B2A4A)],
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                  ),
-                ),
+        ),
+        const SizedBox(width: 16),
+        // Right Eye (OD)
+        Expanded(
+          child: _buildSingleViewfinder(
+            title: 'Right Eye (OD)',
+            image: _rightImage,
+            onCapture: () => _pickImage(false),
+            onGallery: () => _pickFromGallery(false),
+            onClear: () => setState(() => _rightImage = null),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSingleViewfinder({
+    required String title,
+    required File? image,
+    required VoidCallback onCapture,
+    required VoidCallback onGallery,
+    required VoidCallback onClear,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 14,
+            color: AppTheme.textDark,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          height: 220,
+          decoration: BoxDecoration(
+            color: Colors.black,
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: AppTheme.primaryBlue.withOpacity(0.15),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
               ),
-
-            // Scanning overlay
-            _buildScanningOverlay(),
-
-            // Corner brackets
-            _buildCornerBrackets(),
-
-            // Retake button
-            if (_image != null)
-              Positioned(
-                top: 16,
-                right: 16,
-                child: GestureDetector(
-                  onTap: () => setState(() => _image = null),
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.black54,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.refresh, color: Colors.white, size: 16),
-                        SizedBox(width: 4),
-                        Text(
-                          'Retake',
-                          style: TextStyle(color: Colors.white, fontSize: 12),
-                        ),
-                      ],
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                if (image != null)
+                  Image.file(
+                    image,
+                    fit: BoxFit.cover,
+                    width: double.infinity,
+                    height: double.infinity,
+                  )
+                else
+                  Container(
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [Color(0xFF0D1B2A), Color(0xFF1B2A4A)],
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                      ),
                     ),
                   ),
-                ),
-              ),
 
-            // Tap to capture or select image (when no image)
-            if (_image == null)
-              Positioned(
-                bottom: 28,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Camera Action
-                    GestureDetector(
-                      onTap: _pickImage,
-                      child: AnimatedBuilder(
-                        animation: _pulseAnimation,
-                        builder: (context, child) => Transform.scale(
-                          scale: _pulseAnimation.value,
-                          child: child,
+                // Corner brackets
+                _buildCornerBrackets(),
+
+                // Clear button
+                if (image != null)
+                  Positioned(
+                    top: 10,
+                    right: 10,
+                    child: GestureDetector(
+                      onTap: onClear,
+                      child: Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: const BoxDecoration(
+                          color: Colors.black54,
+                          shape: BoxShape.circle,
                         ),
+                        child: const Icon(Icons.close, color: Colors.white, size: 14),
+                      ),
+                    ),
+                  ),
+
+                // Actions if empty
+                if (image == null)
+                  Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      GestureDetector(
+                        onTap: onCapture,
+                        child: AnimatedBuilder(
+                          animation: _pulseAnimation,
+                          builder: (context, child) => Transform.scale(
+                            scale: _pulseAnimation.value,
+                            child: child,
+                          ),
+                          child: Container(
+                            width: 56,
+                            height: 56,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: AppTheme.primaryBlue.withOpacity(0.9),
+                              border: Border.all(color: Colors.white, width: 2.5),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: AppTheme.primaryBlue.withOpacity(0.4),
+                                  blurRadius: 10,
+                                  spreadRadius: 2,
+                                ),
+                              ],
+                            ),
+                            child: const Icon(
+                              Icons.camera_alt_rounded,
+                              color: Colors.white,
+                              size: 24,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      GestureDetector(
+                        onTap: onGallery,
                         child: Container(
-                          width: 72,
-                          height: 72,
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                           decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: AppTheme.primaryBlue.withOpacity(0.9),
-                            border: Border.all(color: Colors.white, width: 3),
-                            boxShadow: [
-                              BoxShadow(
-                                color: AppTheme.primaryBlue.withOpacity(0.6),
-                                blurRadius: 20,
-                                spreadRadius: 4,
+                            color: Colors.white.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.white24),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.photo_library_outlined, color: Colors.white, size: 12),
+                              SizedBox(width: 4),
+                              Text(
+                                'Gallery',
+                                style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
                               ),
                             ],
                           ),
-                          child: const Icon(
-                            Icons.camera_alt_rounded,
-                            color: Colors.white,
-                            size: 32,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 28),
-                    // Gallery Action
-                    GestureDetector(
-                      onTap: _pickFromGallery,
-                      child: Container(
-                        width: 72,
-                        height: 72,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Colors.white.withOpacity(0.2),
-                          border: Border.all(color: Colors.white, width: 3),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.3),
-                              blurRadius: 15,
-                              spreadRadius: 2,
-                            ),
-                          ],
-                        ),
-                        child: const Icon(
-                          Icons.photo_library_rounded,
-                          color: Colors.white,
-                          size: 28,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-            // "Image captured" badge
-            if (_image != null)
-              Positioned(
-                bottom: 16,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppTheme.successGreen.withOpacity(0.9),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.check_circle, color: Colors.white, size: 16),
-                      SizedBox(width: 6),
-                      Text(
-                        'Image Captured',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
                         ),
                       ),
                     ],
                   ),
-                ),
-              ),
-          ],
+
+                // Success Badge
+                if (image != null)
+                  Positioned(
+                    bottom: 12,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppTheme.successGreen.withOpacity(0.9),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.check, color: Colors.white, size: 12),
+                          SizedBox(width: 4),
+                          Text(
+                            'Ready',
+                            style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ),
-      ),
+      ],
     );
   }
 

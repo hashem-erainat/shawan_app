@@ -5,7 +5,8 @@ import 'package:image/image.dart' as img;
 import '../../core/theme.dart';
 
 class CustomCameraScreen extends StatefulWidget {
-  const CustomCameraScreen({super.key});
+  final String eyeName;
+  const CustomCameraScreen({super.key, required this.eyeName});
 
   @override
   State<CustomCameraScreen> createState() => _CustomCameraScreenState();
@@ -113,6 +114,32 @@ class _CustomCameraScreenState extends State<CustomCameraScreen> {
             // Camera Preview
             Positioned.fill(
               child: CameraPreview(_controller!),
+            ),
+
+            // Eye alignment indicator overlay
+            Positioned(
+              top: 110,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.white24),
+                  ),
+                  child: Text(
+                    'Align: ${widget.eyeName}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+              ),
             ),
 
             // Top Controls

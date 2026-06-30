@@ -1,6 +1,7 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
-import '../../core/services/firebase_service.dart';
+import '../../core/services/local_database.dart';
 import '../../models/scan_record.dart';
 import '../scan/result_screen.dart';
 
@@ -16,16 +17,14 @@ class HistoryScreen extends StatelessWidget {
         backgroundColor: Colors.white,
         elevation: 0,
       ),
-      body: StreamBuilder<List<ScanRecord>>(
-        stream: FirebaseService().getRecentScans(), // Using recent scans for now as history
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (!snapshot.hasData || snapshot.data!.isEmpty) {
+      body: ValueListenableBuilder(
+        valueListenable: LocalDatabase().getScansListenable(),
+        builder: (context, box, child) {
+          final scans = LocalDatabase().getAllScans();
+          if (scans.isEmpty) {
             return _buildEmptyHistory();
           }
-          return _buildHistoryList(snapshot.data!);
+          return _buildHistoryList(scans);
         },
       ),
     );
@@ -81,32 +80,43 @@ class HistoryScreen extends StatelessWidget {
                     width: 60,
                     height: 60,
                     child: scan.imageUrl.isNotEmpty
-                        ? Image.network(
-                            scan.imageUrl,
-                            fit: BoxFit.cover,
-                            loadingBuilder: (context, child, loadingProgress) {
-                              if (loadingProgress == null) return child;
-                              return Container(
-                                color: Colors.grey.shade100,
-                                child: const Center(
-                                  child: SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryBlue),
+                        ? (scan.imageUrl.startsWith('http') || scan.imageUrl.startsWith('https')
+                            ? Image.network(
+                                scan.imageUrl,
+                                fit: BoxFit.cover,
+                                loadingBuilder: (context, child, loadingProgress) {
+                                  if (loadingProgress == null) return child;
+                                  return Container(
+                                    color: Colors.grey.shade100,
+                                    child: const Center(
+                                      child: SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryBlue),
+                                        ),
+                                      ),
                                     ),
-                                  ),
-                                ),
-                              );
-                            },
-                            errorBuilder: (context, error, stackTrace) {
-                              return Container(
-                                color: Colors.grey.shade100,
-                                child: const Icon(Icons.image_not_supported_outlined, color: Colors.grey, size: 20),
-                              );
-                            },
-                          )
+                                  );
+                                },
+                                errorBuilder: (context, error, stackTrace) {
+                                  return Container(
+                                    color: Colors.grey.shade100,
+                                    child: const Icon(Icons.image_not_supported_outlined, color: Colors.grey, size: 20),
+                                  );
+                                },
+                              )
+                            : Image.file(
+                                File(scan.imageUrl),
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return Container(
+                                    color: Colors.grey.shade100,
+                                    child: const Icon(Icons.broken_image_outlined, color: Colors.grey, size: 20),
+                                  );
+                                },
+                              ))
                         : Container(
                             color: Colors.grey.shade100,
                             child: const Icon(Icons.remove_red_eye_outlined, color: Colors.grey, size: 20),

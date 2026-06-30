@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -95,17 +96,25 @@ void showFullScreenImage(BuildContext context, String imageUrl) {
             minScale: 0.5,
             maxScale: 4.0,
             child: imageUrl.isNotEmpty
-                ? Image.network(
-                    imageUrl,
-                    fit: BoxFit.contain,
-                    loadingBuilder: (context, child, loadingProgress) {
-                      if (loadingProgress == null) return child;
-                      return const Center(child: CircularProgressIndicator(color: Colors.white));
-                    },
-                    errorBuilder: (context, error, stackTrace) {
-                      return const Icon(Icons.image_not_supported_outlined, color: Colors.white54, size: 64);
-                    },
-                  )
+                ? (imageUrl.startsWith('http') || imageUrl.startsWith('https')
+                    ? Image.network(
+                        imageUrl,
+                        fit: BoxFit.contain,
+                        loadingBuilder: (context, child, loadingProgress) {
+                          if (loadingProgress == null) return child;
+                          return const Center(child: CircularProgressIndicator(color: Colors.white));
+                        },
+                        errorBuilder: (context, error, stackTrace) {
+                          return const Icon(Icons.image_not_supported_outlined, color: Colors.white54, size: 64);
+                        },
+                      )
+                    : Image.file(
+                        File(imageUrl),
+                        fit: BoxFit.contain,
+                        errorBuilder: (context, error, stackTrace) {
+                          return const Icon(Icons.broken_image_outlined, color: Colors.white54, size: 64);
+                        },
+                      ))
                 : const Icon(Icons.image_not_supported_outlined, color: Colors.white54, size: 64),
           ),
         ),

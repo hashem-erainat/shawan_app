@@ -1,6 +1,8 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../core/theme.dart';
-import '../../core/services/firebase_service.dart';
+import '../../core/services/local_database.dart';
 import '../../models/patient.dart';
 import '../../models/scan_record.dart';
 import '../scan/result_screen.dart';
@@ -32,27 +34,14 @@ class PatientDetailScreen extends StatelessWidget {
               padding: EdgeInsets.fromLTRB(24, 32, 24, 16),
               child: Text('Diagnostic History', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
             ),
-            StreamBuilder<List<ScanRecord>>(
-              stream: FirebaseService().getPatientScans(patient.id),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: Padding(
-                    padding: EdgeInsets.all(32.0),
-                    child: CircularProgressIndicator(),
-                  ));
-                }
-                if (snapshot.hasError) {
-                  return Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Text('Error loading history: ${snapshot.error}', textAlign: TextAlign.center),
-                    ),
-                  );
-                }
-                if (!snapshot.hasData || snapshot.data!.isEmpty) {
+            ValueListenableBuilder(
+              valueListenable: LocalDatabase().getScansListenable(),
+              builder: (context, box, child) {
+                final scans = LocalDatabase().getPatientScans(patient.id);
+                if (scans.isEmpty) {
                   return _buildEmptyHistory();
                 }
-                return _buildScanHistoryList(snapshot.data!);
+                return _buildScanHistoryList(scans);
               },
             ),
           ],
@@ -139,85 +128,158 @@ class PatientDetailScreen extends StatelessWidget {
         final scan = scans[index];
         final Color statusColor = _getStatusColor(scan.resultLabel);
         
-        return GestureDetector(
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => ResultScreen(scan: scan)),
+        return Dismissible(
+          key: Key(scan.id),
+          direction: DismissDirection.endToStart,
+          background: Container(
+            alignment: Alignment.centerRight,
+            padding: const EdgeInsets.only(right: 20),
+            decoration: BoxDecoration(
+              color: AppTheme.errorRed,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: const Icon(Icons.delete_outline, color: Colors.white, size: 28),
+          ),
+          confirmDismiss: (direction) async {
+            return await showDialog<bool>(
+              context: context,
+              builder: (dialogContext) => AlertDialog(
+                title: const Text('Delete Scan Record?'),
+                content: const Text('Are you sure you want to delete this scan record? This action cannot be undone.'),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext, false),
+                    child: const Text('Cancel'),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext, true),
+                    style: TextButton.styleFrom(foregroundColor: AppTheme.errorRed),
+                    child: const Text('Delete'),
+                  ),
+                ],
+              ),
             );
           },
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.grey.shade100),
-            ),
-            child: Row(
-              children: [
-                GestureDetector(
-                  onTap: () {
-                    if (scan.imageUrl.isNotEmpty) {
-                      showFullScreenImage(context, scan.imageUrl);
-                    }
-                  },
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: SizedBox(
-                      width: 50,
-                      height: 50,
-                      child: scan.imageUrl.isNotEmpty
-                          ? Image.network(
-                              scan.imageUrl,
-                              fit: BoxFit.cover,
-                              loadingBuilder: (context, child, loadingProgress) {
-                                if (loadingProgress == null) return child;
-                                return Container(
-                                  color: Colors.grey.shade100,
-                                  child: const Center(
-                                    child: SizedBox(
-                                      width: 14,
-                                      height: 14,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryBlue),
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              },
-                              errorBuilder: (context, error, stackTrace) {
-                                return Container(
-                                  color: Colors.grey.shade100,
-                                  child: const Icon(Icons.image_not_supported_outlined, color: Colors.grey, size: 18),
-                                );
-                              },
-                            )
-                          : Container(
-                              color: Colors.grey.shade100,
-                              child: const Icon(Icons.remove_red_eye_outlined, color: Colors.grey, size: 18),
-                            ),
+          onDismissed: (direction) async {
+            try {
+              // Delete locally
+              await LocalDatabase().deleteScan(scan.id);
+              
+              // Delete from Firestore if possible
+              try {
+                await FirebaseFirestore.instance.collection('scans').doc(scan.id).delete();
+              } catch (_) {}
+              
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Scan record deleted successfully'),
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              }
+            } catch (e) {
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Failed to delete scan record: $e'),
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              }
+            }
+          },
+          child: GestureDetector(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => ResultScreen(scan: scan)),
+              );
+            },
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.grey.shade100),
+              ),
+              child: Row(
+                children: [
+                  GestureDetector(
+                    onTap: () {
+                      if (scan.imageUrl.isNotEmpty) {
+                        showFullScreenImage(context, scan.imageUrl);
+                      }
+                    },
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: SizedBox(
+                        width: 50,
+                        height: 50,
+                        child: scan.imageUrl.isNotEmpty
+                            ? (scan.imageUrl.startsWith('http') || scan.imageUrl.startsWith('https')
+                                ? Image.network(
+                                    scan.imageUrl,
+                                    fit: BoxFit.cover,
+                                    loadingBuilder: (context, child, loadingProgress) {
+                                      if (loadingProgress == null) return child;
+                                      return Container(
+                                        color: Colors.grey.shade100,
+                                        child: const Center(
+                                          child: SizedBox(
+                                            width: 14,
+                                            height: 14,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryBlue),
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                    errorBuilder: (context, error, stackTrace) {
+                                      return Container(
+                                        color: Colors.grey.shade100,
+                                        child: const Icon(Icons.image_not_supported_outlined, color: Colors.grey, size: 18),
+                                      );
+                                    },
+                                  )
+                                : Image.file(
+                                    File(scan.imageUrl),
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (context, error, stackTrace) {
+                                      return Container(
+                                        color: Colors.grey.shade100,
+                                        child: const Icon(Icons.broken_image_outlined, color: Colors.grey, size: 18),
+                                      );
+                                    },
+                                  ))
+                            : Container(
+                                color: Colors.grey.shade100,
+                                child: const Icon(Icons.remove_red_eye_outlined, color: Colors.grey, size: 18),
+                              ),
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${scan.timestamp.day}/${scan.timestamp.month}/${scan.timestamp.year}',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      Text(
-                        scan.resultLabel ?? 'Processing...',
-                        style: TextStyle(color: statusColor, fontSize: 12, fontWeight: FontWeight.w600),
-                      ),
-                    ],
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${scan.timestamp.day}/${scan.timestamp.month}/${scan.timestamp.year}',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        Text(
+                          scan.resultLabel ?? 'Processing...',
+                          style: TextStyle(color: statusColor, fontSize: 12, fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                const Icon(Icons.chevron_right, color: Colors.grey),
-              ],
+                  const Icon(Icons.chevron_right, color: Colors.grey),
+                ],
+              ),
             ),
           ),
         );
@@ -251,7 +313,7 @@ class PatientDetailScreen extends StatelessWidget {
             onPressed: () async {
               try {
                 // 1. Delete the patient and their data
-                await FirebaseService().deletePatient(patient.id);
+                await LocalDatabase().deletePatient(patient.id);
                 
                 if (context.mounted) {
                   // 2. Close the confirmation dialog

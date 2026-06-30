@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../core/theme.dart';
-import '../../core/services/firebase_service.dart';
-
 import '../../models/patient.dart';
+import '../../core/services/local_database.dart';
 
 class AddPatientScreen extends StatefulWidget {
   final Patient? patient;
@@ -44,24 +43,23 @@ class _AddPatientScreenState extends State<AddPatientScreen> {
 
     setState(() => _isLoading = true);
     try {
-      if (widget.patient != null) {
-        // Update existing patient
-        await FirebaseService().updatePatient(
-          id: widget.patient!.id,
-          name: _nameController.text.trim(),
-          age: int.tryParse(_ageController.text),
-          phone: _phoneController.text.trim(),
-          gender: _selectedGender,
-        );
-      } else {
-        // Create new patient
-        await FirebaseService().createPatient(
-          name: _nameController.text.trim(),
-          age: int.tryParse(_ageController.text),
-          phone: _phoneController.text.trim(),
-          gender: _selectedGender,
-        );
-      }
+      final String id = widget.patient?.id ?? DateTime.now().millisecondsSinceEpoch.toString();
+      
+      final p = Patient(
+        id: id,
+        name: _nameController.text.trim(),
+        createdAt: widget.patient?.createdAt ?? DateTime.now(),
+        lastScanDate: widget.patient?.lastScanDate,
+        phone: _phoneController.text.trim().isEmpty ? null : _phoneController.text.trim(),
+        age: int.tryParse(_ageController.text),
+        gender: _selectedGender,
+      );
+
+      // Save locally
+      await LocalDatabase().savePatient(p);
+
+      // Add to pending sync queue
+      await LocalDatabase().addToPendingSync(id, 'patient');
 
       if (mounted) {
         Navigator.pop(context);

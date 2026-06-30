@@ -11,6 +11,9 @@ import 'edit_profile_screen.dart';
 import '../auth/login_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../../core/services/local_database.dart';
+import '../../core/services/sync_service.dart';
+import '../../core/services/rpi_service.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -139,6 +142,7 @@ class DashboardHome extends StatelessWidget {
             },
           ),
         ),
+        const _SyncIndicator(),
       ],
     );
   }
@@ -260,40 +264,33 @@ class DashboardHome extends StatelessWidget {
   }
 
   Widget _buildStatsSection(BuildContext context) {
-    return StreamBuilder<List<Patient>>(
-      stream: FirebaseService().getPatients(),
-      builder: (context, patientsSnapshot) {
-        final totalPatientsCount = patientsSnapshot.data?.length ?? 0;
+    return ValueListenableBuilder(
+      valueListenable: LocalDatabase().getPatientsListenable(),
+      builder: (context, patientsBox, child) {
+        final patients = LocalDatabase().getAllPatients();
+        final totalPatientsCount = patients.length;
 
-        return StreamBuilder<List<ScanRecord>>(
-          stream: FirebaseService().getAllScans(),
-          builder: (context, scansSnapshot) {
+        return ValueListenableBuilder(
+          valueListenable: LocalDatabase().getScansListenable(),
+          builder: (context, scansBox, child) {
+            final scans = LocalDatabase().getAllScans();
             final now = DateTime.now();
             final startOfToday = DateTime(now.year, now.month, now.day);
 
-            final scansTodayCount =
-                scansSnapshot.data?.where((scan) {
-                  return scan.timestamp.isAfter(startOfToday);
-                }).length ??
-                0;
+            final scansTodayCount = scans.where((scan) {
+              return scan.timestamp.isAfter(startOfToday);
+            }).length;
 
-            final highRiskCount =
-                scansSnapshot.data?.where((scan) {
-                  return scan.resultLabel == 'Severe' ||
-                      scan.resultLabel == 'Proliferative';
-                }).length ??
-                0;
+            final highRiskCount = scans.where((scan) {
+              return scan.resultLabel == 'Severe' || scan.resultLabel == 'Proliferative';
+            }).length;
 
-            // Calculate Dynamic Average Confidence from completed scans
-            final completedScans =
-                scansSnapshot.data?.where((scan) {
-                  return scan.status == ScanStatus.completed &&
-                      scan.confidence != null;
-                }).toList() ??
-                [];
+            final completedScans = scans.where((scan) {
+              return scan.status == ScanStatus.completed && scan.confidence != null;
+            }).toList();
 
             final double avgConfidence = completedScans.isEmpty
-                ? 94.8 // Baseline model accuracy if no scans are done yet
+                ? 94.8
                 : completedScans
                           .map((s) => s.confidence!)
                           .reduce((a, b) => a + b) /
@@ -521,6 +518,15 @@ class _SettingsScreen extends StatelessWidget {
                   ),
                 ),
               ]),
+              const SizedBox(height: 20),
+              _buildSettingsSection('Device Settings', [
+                _buildSettingsTile(
+                  Icons.wifi_tethering_rounded,
+                  'Raspberry Pi IP',
+                  'Configure local server IP',
+                  () => _showIpSettingsDialog(context),
+                ),
+              ]),
               const SizedBox(height: 32),
               // Sign Out Button
               SizedBox(
@@ -625,6 +631,169 @@ class _SettingsScreen extends StatelessWidget {
             )
           : const Icon(Icons.chevron_right, color: Colors.grey, size: 18),
       onTap: onTap,
+    );
+  }
+  void _showIpSettingsDialog(BuildContext context) async {
+    final rpiService = RpiService();
+    final currentIp = await rpiService.getIpAddress();
+    final controller = TextEditingController(text: currentIp);
+
+    if (!context.mounted) return;
+
+    await showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Raspberry Pi IP Settings'),
+          content: TextField(
+            controller: controller,
+            decoration: const InputDecoration(
+              labelText: 'IP Address',
+              hintText: 'e.g., 10.42.0.1',
+            ),
+            keyboardType: TextInputType.text,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                await rpiService.setIpAddress(controller.text);
+                if (dialogContext.mounted) {
+                  Navigator.pop(dialogContext);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('IP updated to ${controller.text}'),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _SyncIndicator extends StatefulWidget {
+  const _SyncIndicator();
+
+  @override
+  State<_SyncIndicator> createState() => _SyncIndicatorState();
+}
+
+class _SyncIndicatorState extends State<_SyncIndicator> {
+  bool _isSyncing = false;
+
+  Future<void> _handleSync() async {
+    setState(() => _isSyncing = true);
+    try {
+      await SyncService().syncNow();
+    } finally {
+      if (mounted) {
+        setState(() => _isSyncing = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder(
+      valueListenable: LocalDatabase().getPendingSyncListenable(),
+      builder: (context, box, child) {
+        final pendingItems = LocalDatabase().getPendingSyncItems();
+        final count = pendingItems.length;
+
+        if (_isSyncing) {
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: AppTheme.primaryBlue.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryBlue),
+                  ),
+                ),
+                SizedBox(width: 8),
+                Text(
+                  'Syncing...',
+                  style: TextStyle(
+                    color: AppTheme.primaryBlue,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        if (count == 0) {
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: AppTheme.successGreen.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.check_circle_rounded, color: AppTheme.successGreen, size: 14),
+                SizedBox(width: 6),
+                Text(
+                  'All Synced',
+                  style: TextStyle(
+                    color: AppTheme.successGreen,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        return InkWell(
+          onTap: _handleSync,
+          borderRadius: BorderRadius.circular(20),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: AppTheme.warningOrange.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: AppTheme.warningOrange.withOpacity(0.3)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.sync_rounded, color: AppTheme.warningOrange, size: 14),
+                const SizedBox(width: 6),
+                Text(
+                  '$count Pending',
+                  style: const TextStyle(
+                    color: AppTheme.warningOrange,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

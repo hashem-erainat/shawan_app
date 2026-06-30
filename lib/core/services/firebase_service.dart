@@ -36,12 +36,16 @@ class FirebaseService {
         userId: currentUid,
         patientId: patientId,
         patientName: patientName,
-        imageUrl: imageUrl,
         status: ScanStatus.pending,
-        stage: null,
-        resultLabel: null,
         timestamp: DateTime.now(),
-        confidence: null,
+        leftImageUrl: '',
+        leftStage: null,
+        leftResultLabel: null,
+        leftConfidence: null,
+        rightImageUrl: imageUrl,
+        rightStage: null,
+        rightResultLabel: null,
+        rightConfidence: null,
       );
 
       print(
